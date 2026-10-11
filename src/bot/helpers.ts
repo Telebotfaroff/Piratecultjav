@@ -620,7 +620,7 @@ async function showForceSubAdminMenu(ctx: any) {
     ]);
     rows.push([
       Markup.button.callback('🧪 Test ' + ch.title.slice(0, 18), 'settings:forcesub:test:' + ch.id),
-      Markup.button.callback('🗑️ Delete', 'settings:forcesub:delete:' + ch.id),
+      Markup.button.callback('🗑️ Delete', 'settings:forcesub:confirm-delete:' + ch.id),
     ]);
   }
   rows.push([Markup.button.callback('🔄 Refresh', 'settings:forcesub')]);
