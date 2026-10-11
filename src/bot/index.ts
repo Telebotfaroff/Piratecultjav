@@ -226,24 +226,15 @@ bot.command('start', async (ctx) => {
     }
 
     const welcome = [
-      '╭━━━━━━━━━━━━━━━━━━━━╮',
-      '      ✦ <b>PIRATECULTJAV</b> ✦',
-      '╰━━━━━━━━━━━━━━━━━━━━╯',
+      '✦ <b>PIRATECULTJAV</b> ✦',
       '',
-      '👋 Welcome to your video library assistant.',
+      '👋 Welcome! Search videos by code or keyword.',
+      '📥 Open a video from the website using <b>Get Video</b>.',
       '',
-      '━━━━━━━━━━━━━━━━━━━━',
-      '⚡ <b>WHAT WOULD YOU LIKE TO DO?</b>',
+      '💡 Try: <code>ADN-001</code> · <code>STAR-765</code>',
       '',
-      '🔎 Search the catalog by code or keyword.',
-      '🎬 Open a video using the website’s Get Video button.',
-      '📊 Check your plan and daily allowance.',
-      '',
-      '💡 <b>Try a code</b>',
-      '<code>ADN-001</code>  ·  <code>STAR-765</code>',
-      '',
-      '<i>Choose an option below to get started.</i>'
-    ].join('\n');
+      '<i>Choose an option below.</i>',
+    ].join('\\n');
 
     const startKeyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🔎 Search Catalog', 'menu:search')],
