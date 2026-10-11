@@ -24,7 +24,7 @@ export function registerUserCallbacks(bot: Telegraf) {
   bot.action('user:promo', async (ctx) => {
       if (!ctx.from) return ctx.answerCbQuery();
       await ctx.answerCbQuery();
-      return ctx.reply('🎟️ <b>Redeem Promo</b>\\n\\nUse <code>/promo YOUR_CODE</code> to redeem a promo code.', { parse_mode: 'HTML' });
+      return ctx.reply('🎟️ <b>Redeem Promo</b>\n\nUse <code>/promo YOUR_CODE</code> to redeem a promo code.', { parse_mode: 'HTML' });
     });
 
   bot.action('user:leaderboard', async (ctx) => {
