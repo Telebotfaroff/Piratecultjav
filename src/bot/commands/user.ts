@@ -57,7 +57,7 @@ export function registerUserCommands(bot: Telegraf) {
         '<code>JUR-270</code>',
         '',
         'Type your code below.'
-      ].join('\\n');
+      ].join('\n');
   
       return ctx.reply(welcome, { parse_mode: 'HTML' });
     });
@@ -83,7 +83,7 @@ export function registerUserCommands(bot: Telegraf) {
           : `${result.reward_plan === 'premium' ? '💎 Premium' : '⚡ Semi Premium'} for ${result.reward_days} day(s)`;
   
         return ctx.reply(
-          `🎉 <b>Promo redeemed!</b>\\n\\n🎟️ Code: <code>${escapeHtml(code.toUpperCase())}</code>\\n🎁 Reward: <b>${reward}</b>\\n📅 Until: <b>${result.expires_at ? escapeHtml(new Date(result.expires_at).toLocaleString()) : 'active'}</b>`,
+          `🎉 <b>Promo redeemed!</b>\n\n🎟️ Code: <code>${escapeHtml(code.toUpperCase())}</code>\n🎁 Reward: <b>${reward}</b>\n📅 Until: <b>${result.expires_at ? escapeHtml(new Date(result.expires_at).toLocaleString()) : 'active'}</b>`,
           { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('📊 My Dashboard', 'user:plan')]]) },
         );
       } catch (err) {
@@ -112,6 +112,6 @@ export function registerUserCommands(bot: Telegraf) {
         '/promo &lt;CODE&gt;',
         '/referral',
         '/leaderboard'
-      ].join('\\n'), { parse_mode: 'HTML' });
+      ].join('\n'), { parse_mode: 'HTML' });
     });
 }
