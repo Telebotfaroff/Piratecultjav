@@ -28,8 +28,8 @@ export function registerAdminCommands(bot: Telegraf) {
       const hours = Number.isFinite(rawHours) ? Math.min(Math.max(Math.floor(rawHours), 1), 168) : 24;
       try {
         const stats = await getVideoDeliveryAnalytics(hours);
-        const top = stats.topVideos.length ? stats.topVideos.map((item, index) => (index + 1) + '. <code>' + escapeHtml(item.code) + '</code> — ' + item.deliveries).join('\\n') : 'No successful deliveries yet.';
-        return ctx.reply('📊 <b>Delivery Analytics</b>\\n\\n⏱ Window: <b>' + hours + 'h</b>\\n👥 Unique users: <b>' + stats.uniqueUsers + '</b>\\n🎬 Attempts: <b>' + stats.attempts + '</b>\\n✅ Delivered: <b>' + stats.delivered + '</b>\\n🔒 Force-sub blocks: <b>' + stats.forceSubBlocks + '</b>\\n🚫 Limit blocks: <b>' + stats.limitBlocks + '</b>\\n⚠️ Delivery failures: <b>' + stats.failures + '</b>\\n\\n🔥 <b>Top delivered videos</b>\\n' + top, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Refresh', 'analytics:24')], [Markup.button.callback('⬅️ Admin Center', 'settings:main')]]) });
+        const top = stats.topVideos.length ? stats.topVideos.map((item, index) => (index + 1) + '. <code>' + escapeHtml(item.code) + '</code> — ' + item.deliveries).join('\n') : 'No successful deliveries yet.';
+        return ctx.reply('📊 <b>Delivery Analytics</b>\n\n⏱ Window: <b>' + hours + 'h</b>\n👥 Unique users: <b>' + stats.uniqueUsers + '</b>\n🎬 Attempts: <b>' + stats.attempts + '</b>\n✅ Delivered: <b>' + stats.delivered + '</b>\n🔒 Force-sub blocks: <b>' + stats.forceSubBlocks + '</b>\n🚫 Limit blocks: <b>' + stats.limitBlocks + '</b>\n⚠️ Delivery failures: <b>' + stats.failures + '</b>\n\n🔥 <b>Top delivered videos</b>\n' + top, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Refresh', 'analytics:24')], [Markup.button.callback('⬅️ Admin Center', 'settings:main')]]) });
       } catch (err) {
         console.error('[Analytics] Failed:', err);
         return ctx.reply('⚠️ Could not load delivery analytics.');
@@ -82,7 +82,7 @@ export function registerAdminCommands(bot: Telegraf) {
           `${i + 1}. 👤 <code>${p.telegram_user_id}</code> · 💎 ${p.duration_days}d · ⭐ ${p.amount_stars} · ${escapeHtml(new Date(p.created_at).toLocaleString())}`
         );
         return ctx.reply(
-          '💳 <b>Recent Premium Payments</b>\\n\\n' + lines.join('\\n'),
+          '💳 <b>Recent Premium Payments</b>\n\n' + lines.join('\n'),
           { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Monetization', 'admin:monetization')]]) },
         );
       } catch (err) {
@@ -102,7 +102,7 @@ export function registerAdminCommands(bot: Telegraf) {
           const expiry = p.expires_at ? new Date(p.expires_at).toLocaleString() : 'never';
           return `${i + 1}. <code>${escapeHtml(p.code)}</code> · ${p.is_active ? '🟢' : '🔴'} · ${reward} · ${usage} · exp: ${escapeHtml(expiry)}`;
         });
-        return ctx.reply('🎟️ <b>Promo Codes</b>\\n\\n' + lines.join('\\n'), {
+        return ctx.reply('🎟️ <b>Promo Codes</b>\n\n' + lines.join('\n'), {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Monetization', 'admin:monetization')]]),
         });
@@ -150,7 +150,7 @@ export function registerAdminCommands(bot: Telegraf) {
   
       if (!code || !['premium', 'semi_premium', 'unlimited'].includes(reward) || !Number.isInteger(days) || days <= 0) {
         return ctx.reply(
-          'Usage:\\n/createpromo <CODE> <premium|semi_premium|unlimited> <days> [max_uses] [expiry_iso]\\n\\nExample: /createpromo WELCOME30 premium 30 100'
+          'Usage:\n/createpromo <CODE> <premium|semi_premium|unlimited> <days> [max_uses] [expiry_iso]\n\nExample: /createpromo WELCOME30 premium 30 100'
         );
       }
   
@@ -174,7 +174,7 @@ export function registerAdminCommands(bot: Telegraf) {
         if (!ok) return ctx.reply('❌ Could not create promo. The code may already exist or the reward settings are invalid.');
   
         return ctx.reply(
-          `✅ <b>Promo created</b>\\n\\n🎟️ Code: <code>${escapeHtml(code)}</code>\\n🎁 Reward: <b>${rewardType === 'unlimited' ? `Unlimited for ${days} day(s)` : `${rewardPlan} for ${days} day(s)`}</b>\\n👥 Uses: <b>${maxUses ?? 'Unlimited'}</b>${expiresAt ? `\\n⏰ Expires: <b>${escapeHtml(new Date(expiresAt).toLocaleString())}</b>` : ''}`,
+          `✅ <b>Promo created</b>\n\n🎟️ Code: <code>${escapeHtml(code)}</code>\n🎁 Reward: <b>${rewardType === 'unlimited' ? `Unlimited for ${days} day(s)` : `${rewardPlan} for ${days} day(s)`}</b>\n👥 Uses: <b>${maxUses ?? 'Unlimited'}</b>${expiresAt ? `\n⏰ Expires: <b>${escapeHtml(new Date(expiresAt).toLocaleString())}</b>` : ''}`,
           { parse_mode: 'HTML' },
         );
       } catch (err) {
@@ -194,12 +194,12 @@ export function registerAdminCommands(bot: Telegraf) {
         const expiry = dashboard.plan_expires_at ? new Date(dashboard.plan_expires_at).toLocaleString() : '—';
         const bonus = dashboard.unlimited_until ? new Date(dashboard.unlimited_until).toLocaleString() : '—';
         return ctx.reply(
-          '👤 <b>User Details</b>\\n\\n' +
-          `🆔 ID: <code>${userId}</code>\\n` +
-          `⭐ Plan: <b>${plan}</b>\\n` +
-          `📅 Plan expiry: <b>${escapeHtml(expiry)}</b>\\n` +
-          `🎁 Unlimited bonus: <b>${escapeHtml(bonus)}</b>\\n` +
-          `🎬 Today: <b>${dashboard.daily_used}/${dashboard.daily_limit}</b>\\n` +
+          '👤 <b>User Details</b>\n\n' +
+          `🆔 ID: <code>${userId}</code>\n` +
+          `⭐ Plan: <b>${plan}</b>\n` +
+          `📅 Plan expiry: <b>${escapeHtml(expiry)}</b>\n` +
+          `🎁 Unlimited bonus: <b>${escapeHtml(bonus)}</b>\n` +
+          `🎬 Today: <b>${dashboard.daily_used}/${dashboard.daily_limit}</b>\n` +
           `🤝 Referrals: <b>${dashboard.completed_referral_count}/${dashboard.referral_count}</b>`,
           { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Admin Center', 'settings:main')]]) },
         );
@@ -219,9 +219,9 @@ export function registerAdminCommands(bot: Telegraf) {
       try {
         await setDownloadQuotaSettings({ free, semi_premium: semiPremium });
         return ctx.reply(
-          '✅ <b>Download quotas updated</b>\\n\\n' +
-          `🆓 Free: <b>${free}/day</b>\\n` +
-          `⚡ Semi Premium: <b>${semiPremium}/day</b>\\n` +
+          '✅ <b>Download quotas updated</b>\n\n' +
+          `🆓 Free: <b>${free}/day</b>\n` +
+          `⚡ Semi Premium: <b>${semiPremium}/day</b>\n` +
           '💎 Premium: <b>Unlimited</b>',
           { parse_mode: 'HTML' },
         );
@@ -236,10 +236,10 @@ export function registerAdminCommands(bot: Telegraf) {
       try {
         const q = await getDownloadQuotaSettings();
         return ctx.reply(
-          '📥 <b>Download Quotas</b>\\n\\n' +
-          `🆓 Free: <b>${q.free}/day</b>\\n` +
-          `⚡ Semi Premium: <b>${q.semi_premium}/day</b>\\n` +
-          '💎 Premium: <b>Unlimited</b>\\n\\n' +
+          '📥 <b>Download Quotas</b>\n\n' +
+          `🆓 Free: <b>${q.free}/day</b>\n` +
+          `⚡ Semi Premium: <b>${q.semi_premium}/day</b>\n` +
+          '💎 Premium: <b>Unlimited</b>\n\n' +
           'Change with <code>/setquota FREE SEMI_PREMIUM</code>.',
           { parse_mode: 'HTML' },
         );
@@ -313,7 +313,7 @@ export function registerAdminCommands(bot: Telegraf) {
         }));
         await new Promise(resolve => setTimeout(resolve, 1100));
       }
-      return ctx.reply(`📣 Broadcast finished.\\n\\n✅ Sent: ${sent}\\n❌ Failed: ${failed}`);
+      return ctx.reply(`📣 Broadcast finished.\n\n✅ Sent: ${sent}\n❌ Failed: ${failed}`);
     });
 
   bot.command('jobs', async (ctx) => {
@@ -369,11 +369,11 @@ export function registerAdminCommands(bot: Telegraf) {
           isActive: true,
         });
         return ctx.reply(
-          `✅ <b>Force-sub channel added</b>\\n\\n📢 <b>${escapeHtml(channel.title)}</b>\\n🆔 <code>${escapeHtml(channel.channel_id)}</code>\\n🔗 <code>${escapeHtml(channel.invite_link || '')}</code>\\n📨 Request mode: <b>${channel.request_mode ? 'ON' : 'OFF'}</b>`,
+          `✅ <b>Force-sub channel added</b>\n\n📢 <b>${escapeHtml(channel.title)}</b>\n🆔 <code>${escapeHtml(channel.channel_id)}</code>\n🔗 <code>${escapeHtml(channel.invite_link || '')}</code>\n📨 Request mode: <b>${channel.request_mode ? 'ON' : 'OFF'}</b>`,
           { parse_mode: 'HTML' },
         );
       } catch (err: unknown) {
-        return ctx.reply('❌ Could not add channel. Make sure the bot is an administrator and can create invite links.\\n\\n' + escapeHtml(err instanceof Error ? err.message : String(err)), { parse_mode: 'HTML' });
+        return ctx.reply('❌ Could not add channel. Make sure the bot is an administrator and can create invite links.\n\n' + escapeHtml(err instanceof Error ? err.message : String(err)), { parse_mode: 'HTML' });
       }
     });
 
