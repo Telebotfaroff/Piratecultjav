@@ -33,8 +33,8 @@ export function registerAdminCallbacks(bot: Telegraf) {
       await ctx.answerCbQuery();
       const users = await countUsers();
       return ctx.editMessageText(
-        '👥 <b>User Management</b>\\n\\n' +
-        `Total users: <b>${users}</b>\\n\\n` +
+        '👥 <b>User Management</b>\n\n' +
+        `Total users: <b>${users}</b>\n\n` +
         'Use the commands below for direct actions:',
         {
           parse_mode: 'HTML',
@@ -51,10 +51,10 @@ export function registerAdminCallbacks(bot: Telegraf) {
       await ctx.answerCbQuery();
       const q = await getDownloadQuotaSettings();
       return ctx.editMessageText(
-        '📥 <b>Download Quotas</b>\\n\\n' +
-        `🆓 Free: <b>${q.free}/day</b>\\n` +
-        `⚡ Semi Premium: <b>${q.semi_premium}/day</b>\\n` +
-        '💎 Premium: <b>Unlimited</b>\\n\\n' +
+        '📥 <b>Download Quotas</b>\n\n' +
+        `🆓 Free: <b>${q.free}/day</b>\n` +
+        `⚡ Semi Premium: <b>${q.semi_premium}/day</b>\n` +
+        '💎 Premium: <b>Unlimited</b>\n\n' +
         'Use <code>/setquota FREE SEMI_PREMIUM</code> to change the limits.',
         { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'settings:main')]]) },
       );
@@ -64,12 +64,12 @@ export function registerAdminCallbacks(bot: Telegraf) {
       if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
       await ctx.answerCbQuery();
       return ctx.editMessageText(
-        '💰 <b>Monetization</b>\\n\\n' +
-        `💎 Premium 7d: <b>${config.premium7Stars} ⭐</b>\\n` +
-        `💎 Premium 30d: <b>${config.premium30Stars} ⭐</b>\\n` +
-        `💎 Premium 90d: <b>${config.premium90Stars} ⭐</b>\\n\\n` +
-        '🎟️ Promo codes are managed with <code>/createpromo</code>.\\n' +
-        '👤 Manual access is managed with <code>/setplan</code>.\\n' +
+        '💰 <b>Monetization</b>\n\n' +
+        `💎 Premium 7d: <b>${config.premium7Stars} ⭐</b>\n` +
+        `💎 Premium 30d: <b>${config.premium30Stars} ⭐</b>\n` +
+        `💎 Premium 90d: <b>${config.premium90Stars} ⭐</b>\n\n` +
+        '🎟️ Promo codes are managed with <code>/createpromo</code>.\n' +
+        '👤 Manual access is managed with <code>/setplan</code>.\n' +
         '📥 Daily quotas are managed with <code>/setquota</code>.',
         {
           parse_mode: 'HTML',
@@ -92,7 +92,7 @@ export function registerAdminCallbacks(bot: Telegraf) {
             return `${i + 1}. <code>${escapeHtml(p.code)}</code> · ${p.is_active ? '🟢 Active' : '🔴 Off'} · ${reward} · ${usage}`;
           })
         : ['No promo codes.'];
-      return ctx.editMessageText('🎟️ <b>Promo Codes</b>\\n\\n' + lines.join('\\n') + '\\n\\nUse <code>/activatepromo CODE</code> or <code>/deactivatepromo CODE</code>.', {
+      return ctx.editMessageText('🎟️ <b>Promo Codes</b>\n\n' + lines.join('\n') + '\n\nUse <code>/activatepromo CODE</code> or <code>/deactivatepromo CODE</code>.', {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'admin:monetization')]]),
       });
@@ -102,10 +102,10 @@ export function registerAdminCallbacks(bot: Telegraf) {
       if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery();
       await ctx.answerCbQuery();
       return ctx.editMessageText(
-        '🎟️ <b>Promo Management</b>\\n\\n' +
-        '<code>/createpromo CODE premium 30 100</code>\\n' +
-        '<code>/createpromo CODE semi_premium 7</code>\\n' +
-        '<code>/createpromo CODE unlimited 1 50</code>\\n\\n' +
+        '🎟️ <b>Promo Management</b>\n\n' +
+        '<code>/createpromo CODE premium 30 100</code>\n' +
+        '<code>/createpromo CODE semi_premium 7</code>\n' +
+        '<code>/createpromo CODE unlimited 1 50</code>\n\n' +
         'Optional expiry: add an ISO timestamp as the last argument.',
         { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'admin:monetization')]]) },
       );
@@ -116,7 +116,7 @@ export function registerAdminCallbacks(bot: Telegraf) {
       await ctx.answerCbQuery();
       const jobs = await countJobs();
       return ctx.editMessageText(
-        '🎬 <b>Content & Indexing</b>\\n\\n' +
+        '🎬 <b>Content & Indexing</b>\n\n' +
         'Use these tools to manage the catalog and indexing pipeline.',
         {
           parse_mode: 'HTML',
@@ -133,7 +133,7 @@ export function registerAdminCallbacks(bot: Telegraf) {
       if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery();
       await ctx.answerCbQuery();
       return ctx.editMessageText(
-        '📝 <b>Post Video</b>\\n\\nUse <code>/post</code>, enter the JAV code, then send/forward the video.\\n\\nThe bot fetches metadata, stores the video in the dump channel, and creates/updates the catalog record.',
+        '📝 <b>Post Video</b>\n\nUse <code>/post</code>, enter the JAV code, then send/forward the video.\n\nThe bot fetches metadata, stores the video in the dump channel, and creates/updates the catalog record.',
         { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'admin:content')]]) },
       );
     });
@@ -142,7 +142,7 @@ export function registerAdminCallbacks(bot: Telegraf) {
       if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery();
       await ctx.answerCbQuery();
       return ctx.editMessageText(
-        '🧪 <b>Provider Test</b>\\n\\nUse <code>/test JAV-CODE</code> to fetch and display provider metadata without publishing a video.',
+        '🧪 <b>Provider Test</b>\n\nUse <code>/test JAV-CODE</code> to fetch and display provider metadata without publishing a video.',
         { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'admin:content')]]) },
       );
     });
@@ -163,7 +163,7 @@ export function registerAdminCallbacks(bot: Telegraf) {
       const lines = jobs.length
         ? jobs.map(j => `${statusIcon(j.status)} <b>#${j.id}</b>  <code>${escapeHtml(j.code)}</code>  <i>${escapeHtml(j.status)}</i>`)
         : ['No recent jobs.'];
-      return ctx.editMessageText('⚙️ <b>Recent Jobs</b>\\n\\n' + lines.join('\\n'), {
+      return ctx.editMessageText('⚙️ <b>Recent Jobs</b>\n\n' + lines.join('\n'), {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'admin:content')], [Markup.button.callback('🔄 Refresh', 'admin:jobs')]]),
       });
@@ -173,7 +173,7 @@ export function registerAdminCallbacks(bot: Telegraf) {
       if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
       await ctx.answerCbQuery();
       return ctx.editMessageText(
-        '🛠️ <b>System</b>\\n\\nChoose a system control:',
+        '🛠️ <b>System</b>\n\nChoose a system control:',
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([
@@ -230,10 +230,10 @@ export function registerAdminCallbacks(bot: Telegraf) {
       await setAdminSession(ctx.from.id, 'force_sub_add', 'awaiting_channel');
       await ctx.answerCbQuery();
       return ctx.reply(
-        '➕ <b>Add Force-Sub Channel</b>\\n\\n' +
-        'Add the bot as an administrator in the channel first.\\n\\n' +
-        'Then send:\\n<code>channel_id</code>\\n\\n' +
-        'Optional request mode:\\n<code>channel_id | request:true</code>\\n<code>channel_id | request:false</code>\\n\\n' +
+        '➕ <b>Add Force-Sub Channel</b>\n\n' +
+        'Add the bot as an administrator in the channel first.\n\n' +
+        'Then send:\n<code>channel_id</code>\n\n' +
+        'Optional request mode:\n<code>channel_id | request:true</code>\n<code>channel_id | request:false</code>\n\n' +
         'The bot will automatically read the channel title and create the correct invite link.',
         { parse_mode: 'HTML' },
       );
@@ -316,8 +316,8 @@ export function registerAdminCallbacks(bot: Telegraf) {
       await ctx.answerCbQuery();
       try {
         const stats = await getVideoDeliveryAnalytics(hours);
-        const top = stats.topVideos.length ? stats.topVideos.map((item, index) => (index + 1) + '. <code>' + escapeHtml(item.code) + '</code> — ' + item.deliveries).join('\\n') : 'No successful deliveries yet.';
-        return ctx.editMessageText('📊 <b>Delivery Analytics</b>\\n\\n⏱ Window: <b>' + hours + 'h</b>\\n👥 Unique users: <b>' + stats.uniqueUsers + '</b>\\n🎬 Attempts: <b>' + stats.attempts + '</b>\\n✅ Delivered: <b>' + stats.delivered + '</b>\\n🔒 Force-sub blocks: <b>' + stats.forceSubBlocks + '</b>\\n🚫 Limit blocks: <b>' + stats.limitBlocks + '</b>\\n⚠️ Delivery failures: <b>' + stats.failures + '</b>\\n\\n🔥 <b>Top delivered videos</b>\\n' + top, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Refresh', 'analytics:' + hours)], [Markup.button.callback('⬅️ Admin Center', 'settings:main')]]) });
+        const top = stats.topVideos.length ? stats.topVideos.map((item, index) => (index + 1) + '. <code>' + escapeHtml(item.code) + '</code> — ' + item.deliveries).join('\n') : 'No successful deliveries yet.';
+        return ctx.editMessageText('📊 <b>Delivery Analytics</b>\n\n⏱ Window: <b>' + hours + 'h</b>\n👥 Unique users: <b>' + stats.uniqueUsers + '</b>\n🎬 Attempts: <b>' + stats.attempts + '</b>\n✅ Delivered: <b>' + stats.delivered + '</b>\n🔒 Force-sub blocks: <b>' + stats.forceSubBlocks + '</b>\n🚫 Limit blocks: <b>' + stats.limitBlocks + '</b>\n⚠️ Delivery failures: <b>' + stats.failures + '</b>\n\n🔥 <b>Top delivered videos</b>\n' + top, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Refresh', 'analytics:' + hours)], [Markup.button.callback('⬅️ Admin Center', 'settings:main')]]) });
       } catch { return ctx.answerCbQuery('Analytics unavailable.', { show_alert: true }); }
     });
 
@@ -350,10 +350,10 @@ export function registerAdminCallbacks(bot: Telegraf) {
       const backup = Boolean(config.backupBotToken);
       const active = getActiveBotRole() === 'primary' ? 'PRIMARY' : 'BACKUP';
       return ctx.editMessageText(
-        '🔄 *Bot Recovery*\\n\\n' +
-        '🟢 Active: *' + active + '*\\n' +
-        'Primary token: *' + (primary ? 'configured' : 'missing') + '*\\n' +
-        'Backup token: *' + (backup ? 'configured' : 'missing') + '*\\n\\n' +
+        '🔄 *Bot Recovery*\n\n' +
+        '🟢 Active: *' + active + '*\n' +
+        'Primary token: *' + (primary ? 'configured' : 'missing') + '*\n' +
+        'Backup token: *' + (backup ? 'configured' : 'missing') + '*\n\n' +
         'The backup bot must be added to the same dump and force-sub channels with the required permissions.',
         {
           parse_mode: 'Markdown',
