@@ -176,9 +176,9 @@ async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, s
     if (ctx.from && !isAdmin(ctx.from.id)) {
       try {
         await ctx.reply(
-          '😏 <b>Enjoying the goods?</b>\\n\\n' +
-          'Don’t be selfish, you little troublemaker. 😈 Bring a partner-in-crime into the fun!\\n\\n' +
-          '🎁 If your friend joins through your referral link and successfully gets their first video, you earn <b>+1 day of unlimited access</b>.\\n\\n' +
+          '😏 <b>Enjoying the goods?</b>\n\n' +
+          'Don’t be selfish, you little troublemaker. 😈 Bring a partner-in-crime into the fun!\n\n' +
+          '🎁 If your friend joins through your referral link and successfully gets their first video, you earn <b>+1 day of unlimited access</b>.\n\n' +
           '<i>Good friends share links. Best friends share the blame. 😂</i>',
           {
             parse_mode: 'HTML',
@@ -397,7 +397,7 @@ async function handleSearchQuery(ctx: any, rawQuery: string, page = 0) {
           ),
         ]);
         rows.push([Markup.button.callback('✅ Check Membership', 'check_sub')]);
-        const gateText = '🔒 <b>Join the required channel(s) first</b>\\n\\nSubscribe to every channel below, then tap Check Membership to continue.';
+        const gateText = '🔒 <b>Join the required channel(s) first</b>\n\nSubscribe to every channel below, then tap Check Membership to continue.';
         if (ctx.callbackQuery) {
           try {
             await ctx.editMessageText(gateText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) });
