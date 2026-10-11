@@ -29,47 +29,58 @@ let webhookApp: Express | null = null;
 let webhookRouteRegistered = false;
 setActiveBotRole(config.activeBot);
 
-const START_IMAGES_JSON_URL = 'https://raw.githubusercontent.com/Imtiaz9800/Notification/main/Image.json';
+const START_IMAGES_MANIFEST_URL = 'https://raw.githubusercontent.com/telebottg7-sudo/Cosplay.image/main/image/manifest.json';
+const START_IMAGES_RAW_BASE = 'https://raw.githubusercontent.com/telebottg7-sudo/Cosplay.image/main/image';
 let cachedStartImageLinks: string[] | null = null;
-const resolvedStartImageUrls = new Map<string, string>();
+let lastStartImageUrl: string | null = null;
 
 async function getRandomStartImageUrl(): Promise<string | null> {
   try {
     if (!cachedStartImageLinks) {
-      const response = await fetch(START_IMAGES_JSON_URL, { signal: AbortSignal.timeout(8000) });
-      if (!response.ok) throw new Error(`Image list returned HTTP ${response.status}`);
-      const data = await response.json() as { images?: unknown };
-      cachedStartImageLinks = Array.isArray(data.images)
-        ? data.images.filter((url): url is string => typeof url === 'string' && url.startsWith('https://freeimage.host/'))
+      const response = await fetch(START_IMAGES_MANIFEST_URL, { signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw new Error(`Image manifest returned HTTP ${response.status}`);
+      const manifest = await response.json() as {
+        posts?: Array<{ path?: unknown; chunks?: unknown }>;
+      };
+      const posts = Array.isArray(manifest.posts)
+        ? manifest.posts.filter((post) =>
+            typeof post.path === 'string' &&
+            Array.isArray(post.chunks) &&
+            post.chunks.some((chunk) => typeof chunk === 'string' && /^[a-zA-Z0-9._-]+\.json$/.test(chunk))
+          )
         : [];
+
+      // Cache the URL list in memory. Load post chunks only once per process.
+      const urls = new Set<string>();
+      for (const post of posts) {
+        for (const chunk of (post.chunks as string[]).filter((name) => /^[a-zA-Z0-9._-]+\.json$/.test(name))) {
+          try {
+            const chunkUrl = `${START_IMAGES_RAW_BASE}/${post.path}/${chunk}`;
+            const chunkResponse = await fetch(chunkUrl, { signal: AbortSignal.timeout(5000) });
+            if (!chunkResponse.ok) continue;
+            const chunkData: unknown = await chunkResponse.json();
+            if (Array.isArray(chunkData)) {
+              for (const value of chunkData) {
+                if (typeof value === 'string' && /^https?:\/\//i.test(value)) urls.add(value);
+              }
+            }
+          } catch {
+            // Skip unavailable chunks; other archive folders can still provide images.
+          }
+        }
+      }
+      cachedStartImageLinks = [...urls];
+      console.info(`[StartImage] Loaded ${cachedStartImageLinks.length} image URLs from Cosplay.image`);
     }
 
     if (!cachedStartImageLinks.length) return null;
-    const candidates = [...cachedStartImageLinks].sort(() => Math.random() - 0.5);
-    for (const pageUrl of candidates.slice(0, Math.min(4, candidates.length))) {
-      const cached = resolvedStartImageUrls.get(pageUrl);
-      if (cached) return cached;
-      try {
-        const response = await fetch(pageUrl, {
-          headers: { 'user-agent': 'Mozilla/5.0 (compatible; PiratecultJAVBot/1.0)' },
-          signal: AbortSignal.timeout(6000),
-        });
-        if (!response.ok) continue;
-        const html = await response.text();
-        const match = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["']/i)
-          || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:image|twitter:image)["']/i);
-        const imageUrl = match?.[1]?.replace(/&amp;/g, '&');
-        if (imageUrl && (imageUrl.startsWith('https://') || imageUrl.startsWith('http://'))) {
-          resolvedStartImageUrls.set(pageUrl, imageUrl);
-          return imageUrl;
-        }
-      } catch {
-        // Try another configured image; /start must still work if a host is unavailable.
-      }
-    }
-    return null;
+    let candidates = cachedStartImageLinks.filter((url) => url !== lastStartImageUrl);
+    if (!candidates.length) candidates = cachedStartImageLinks;
+    const selected = candidates[Math.floor(Math.random() * candidates.length)];
+    lastStartImageUrl = selected;
+    return selected;
   } catch (err) {
-    console.warn('[StartImage] Could not load image list:', err instanceof Error ? err.message : String(err));
+    console.warn('[StartImage] Could not load image archive:', err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -228,7 +239,19 @@ bot.command('start', async (ctx) => {
       [Markup.button.url('🌐 Open Website', 'https://piratecultjav.onrender.com/')],
     ]);
 
-    // Use a text message for the home screen so all menu buttons can edit it in place.
+    // Send a shuffled archive image with the welcome caption. Fall back to text if unavailable.
+    const startImageUrl = await getRandomStartImageUrl();
+    if (startImageUrl) {
+      try {
+        return await ctx.replyWithPhoto(startImageUrl, {
+          caption: welcome,
+          parse_mode: 'HTML',
+          ...startKeyboard,
+        });
+      } catch (err) {
+        console.warn('[StartImage] Telegram could not send selected image:', err instanceof Error ? err.message : String(err));
+      }
+    }
     return ctx.reply(welcome, { parse_mode: 'HTML', ...startKeyboard });
   });
 
