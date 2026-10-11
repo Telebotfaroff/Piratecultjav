@@ -148,8 +148,8 @@ function createBot(token: string): Telegraf {
             const safe = (value: unknown) => escapeHtml(value ?? '—');
             await bot.telegram.sendMessage(
               Number(request.userId),
-              '🎉 <b>Your requested video has been added!</b>\\n\\n🎬 <b>' + safe(match.code) + '</b> — ' + safe(match.title) +
-              '\\n\\nTap below to get it.',
+              '🎉 <b>Your requested video has been added!</b>\n\n🎬 <b>' + safe(match.code) + '</b> — ' + safe(match.title) +
+              '\n\nTap below to get it.',
               {
                 parse_mode: 'HTML',
                 ...Markup.inlineKeyboard([[Markup.button.url('🎬 Get Video', 'https://t.me/' + me.username + '?start=' + encodeURIComponent(String(match.code)))]])
@@ -822,7 +822,7 @@ bot.command('start', async (ctx) => {
         const free = Number(parts[0]);
         const semiPremium = Number(parts[1]);
         if (![free, semiPremium].every(value => Number.isInteger(value) && value >= 0 && value <= 100000)) {
-          return ctx.reply('Usage: /setquota <free_limit> <semi_premium_limit>\\nExample: /setquota 20 40');
+          return ctx.reply('Usage: /setquota <free_limit> <semi_premium_limit>\nExample: /setquota 20 40');
         }
         await setDownloadQuotaSettings({ free, semi_premium: semiPremium });
       } else if (parts.length === 2 && /^(free|semi_premium)$/i.test(parts[0]) && /^\\d+$/.test(parts[1])) {
@@ -835,15 +835,15 @@ bot.command('start', async (ctx) => {
         await setDownloadQuotaSettings({ ...current, [plan]: value });
       } else {
         return ctx.reply(
-          'Usage:\\n/setquota <free_limit> <semi_premium_limit>\\n/setquota free <limit>\\n/setquota semi_premium <limit>\\n\\nExample: /setquota 20 40',
+          'Usage:\n/setquota <free_limit> <semi_premium_limit>\n/setquota free <limit>\n/setquota semi_premium <limit>\n\nExample: /setquota 20 40',
         );
       }
 
       const saved = await getDownloadQuotaSettings();
       return ctx.reply(
-        '✅ <b>Download quotas saved</b>\\n\\n' +
-        `🆓 Free: <b>${saved.free}/day</b>\\n` +
-        `⚡ Semi Premium: <b>${saved.semi_premium}/day</b>\\n` +
+        '✅ <b>Download quotas saved</b>\n\n' +
+        `🆓 Free: <b>${saved.free}/day</b>\n` +
+        `⚡ Semi Premium: <b>${saved.semi_premium}/day</b>\n` +
         '💎 Premium: <b>Unlimited</b>',
         { parse_mode: 'HTML' },
       );
@@ -1084,8 +1084,8 @@ bot.command('start', async (ctx) => {
       }
       await setSetting(key, String(chat.id));
       await clearAdminSession(ctx.from.id);
-      return ctx.reply('✅ <b>Destination saved</b>\\n\\n📡 Channel: <code>' + escapeHtml(chat.id) +
-        '</code>\\n\\nSend a test notification to verify delivery.',
+      return ctx.reply('✅ <b>Destination saved</b>\n\n📡 Channel: <code>' + escapeHtml(chat.id) +
+        '</code>\n\nSend a test notification to verify delivery.',
         { parse_mode: 'HTML', ...Markup.inlineKeyboard([
           [Markup.button.callback('🧪 Send Test Notification', 'notifications:test:' + type)],
           [Markup.button.callback('⚙️ Notification Settings', 'settings:notifications')],
@@ -1144,9 +1144,9 @@ bot.command('start', async (ctx) => {
     const notFoundChannel = await getSetting<string>('notification_not_found_channel', '');
     const status = (id: string) => id ? '🟢 <b>Configured</b> · <code>' + escapeHtml(id) + '</code>' : '⚪ <i>Not configured</i>';
     const text =
-      '🔔 <b>NOTIFICATION CENTER</b>\\n━━━━━━━━━━━━━━━━━━━━\\n\\n' +
-      '👥 <b>User & Premium Alerts</b>\\nNew users and premium purchases\\n' + status(joinChannel) + '\\n\\n' +
-      '🔎 <b>Not-Found Search Alerts</b>\\nSearches with no matching video\\n' + status(notFoundChannel) + '\\n\\n' +
+      '🔔 <b>NOTIFICATION CENTER</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
+      '👥 <b>User & Premium Alerts</b>\nNew users and premium purchases\n' + status(joinChannel) + '\n\n' +
+      '🔎 <b>Not-Found Search Alerts</b>\nSearches with no matching video\n' + status(notFoundChannel) + '\n\n' +
       'Choose a notification type to configure it. The bot must be an administrator with permission to post.';
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('👥 Configure User Alerts', 'notifications:configure:join')],
@@ -1170,9 +1170,9 @@ bot.command('start', async (ctx) => {
     const description = type === 'join'
       ? 'Receive alerts for new users and premium purchases.'
       : 'Receive alerts when a search returns no matching videos.';
-    const text = title + '\\n━━━━━━━━━━━━━━━━━━━━\\n\\n' + description +
-      '\\n\\n📡 <b>Destination:</b> ' + escapeHtml(channel || 'Not configured') +
-      '\\n\\nChoose how to configure this destination.\\n\\n💡 Add the bot as an administrator with permission to post messages.';
+    const text = title + '\n━━━━━━━━━━━━━━━━━━━━\n\n' + description +
+      '\n\n📡 <b>Destination:</b> ' + escapeHtml(channel || 'Not configured') +
+      '\n\nChoose how to configure this destination.\n\n💡 Add the bot as an administrator with permission to post messages.';
     const buttons: any[] = [
       [Markup.button.callback('🆔 Enter Channel ID', 'notifications:input:' + type)],
       [Markup.button.callback('🔗 Forward Channel Post', 'notifications:forward:' + type)],
@@ -1210,9 +1210,9 @@ bot.command('start', async (ctx) => {
     const type = ctx.match[1] as 'join' | 'notfound';
     await setAdminSession(ctx.from.id, 'notification_channel', 'awaiting_channel', { type });
     await ctx.answerCbQuery();
-    return ctx.reply('🆔 <b>Set Destination Channel</b>\\n\\n' +
+    return ctx.reply('🆔 <b>Set Destination Channel</b>\n\n' +
       (type === 'join' ? 'User & Premium Alerts' : 'Not-Found Search Alerts') +
-      '\\n\\nSend the channel ID (for example <code>-1001234567890</code>), or forward a post from that channel.\\n\\n' +
+      '\n\nSend the channel ID (for example <code>-1001234567890</code>), or forward a post from that channel.\n\n' +
       'Make sure the bot is an administrator with permission to post. Send /cancel to stop.',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'notifications:cancel')]]) });
   });
@@ -1222,7 +1222,7 @@ bot.command('start', async (ctx) => {
     const type = ctx.match[1] as 'join' | 'notfound';
     await setAdminSession(ctx.from.id, 'notification_channel', 'awaiting_channel', { type, expectForward: true });
     await ctx.answerCbQuery();
-    return ctx.reply('🔗 <b>Forward a Channel Post</b>\\n\\nForward any post from the destination channel to this chat. Telegram must identify the original channel for this to work.\\n\\nSend /cancel to stop.',
+    return ctx.reply('🔗 <b>Forward a Channel Post</b>\n\nForward any post from the destination channel to this chat. Telegram must identify the original channel for this to work.\n\nSend /cancel to stop.',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'notifications:cancel')]]) });
   });
 
@@ -1237,9 +1237,9 @@ bot.command('start', async (ctx) => {
     if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     const type = ctx.match[1] as 'join' | 'notfound';
     await ctx.answerCbQuery();
-    return ctx.reply('⚠️ <b>Disable notifications?</b>\\n\\n' +
+    return ctx.reply('⚠️ <b>Disable notifications?</b>\n\n' +
       (type === 'join' ? 'New-user and premium-purchase alerts' : 'Not-found search alerts') +
-      ' will stop being sent.\\n\\nAre you sure?',
+      ' will stop being sent.\n\nAre you sure?',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([
         [Markup.button.callback('✅ Confirm Disable', 'notifications:disableconfirm:' + type)],
         [Markup.button.callback('↩️ Cancel', 'notifications:configure:' + type)],
@@ -1267,9 +1267,9 @@ bot.command('start', async (ctx) => {
           (member.status === 'administrator' && 'can_post_messages' in member && member.can_post_messages === false)) {
         return ctx.answerCbQuery('The bot must be an administrator with permission to post.', { show_alert: true });
       }
-      await ctx.telegram.sendMessage(channel, '🧪 <b>Test Notification</b>\\n\\n' +
+      await ctx.telegram.sendMessage(channel, '🧪 <b>Test Notification</b>\n\n' +
         (type === 'join' ? 'User & Premium Alerts are configured correctly.' : 'Not-Found Search Alerts are configured correctly.') +
-        '\\n\\n<i>This is a test message from PiratecultJAV.</i>', { parse_mode: 'HTML' });
+        '\n\n<i>This is a test message from PiratecultJAV.</i>', { parse_mode: 'HTML' });
       await ctx.answerCbQuery('Test notification sent.');
       return ctx.reply('✅ Test notification delivered to <code>' + escapeHtml(channel) + '</code>.', {
         parse_mode: 'HTML',
@@ -1296,10 +1296,10 @@ bot.command('start', async (ctx) => {
   async function showQuotaPlanMenu(ctx: any, edit = false) {
     const q = await getDownloadQuotaSettings();
     const text =
-      '📥 <b>Download Quotas</b>\\n\\n' +
-      `🆓 Free: <b>${q.free}/day</b>\\n` +
-      `⚡ Semi Premium: <b>${q.semi_premium}/day</b>\\n` +
-      '💎 Premium: <b>Unlimited</b>\\n\\n' +
+      '📥 <b>Download Quotas</b>\n\n' +
+      `🆓 Free: <b>${q.free}/day</b>\n` +
+      `⚡ Semi Premium: <b>${q.semi_premium}/day</b>\n` +
+      '💎 Premium: <b>Unlimited</b>\n\n' +
       'Select a plan to edit its quota.';
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🆓 Free', 'admin:quota:plan:free')],
@@ -1331,8 +1331,8 @@ bot.command('start', async (ctx) => {
       const title = plan === 'free' ? '🆓 Free Plan' : plan === 'semi_premium' ? '⚡ Semi Premium Plan' : '💎 Premium Plan';
       const current = plan === 'free' ? q.free : plan === 'semi_premium' ? q.semi_premium : null;
       const body = plan === 'premium'
-        ? `💎 <b>Premium Plan</b>\\n\\nQuota: <b>Unlimited</b>`
-        : `${title}\\n\\nCurrent quota: <b>${current}/day</b>`;
+        ? `💎 <b>Premium Plan</b>\n\nQuota: <b>Unlimited</b>`
+        : `${title}\n\nCurrent quota: <b>${current}/day</b>`;
       const rows: any[] = [];
       if (plan !== 'premium') rows.push([Markup.button.callback('✏️ Edit Quota', `admin:quota:edit:${plan}`)]);
       rows.push([Markup.button.callback('⬅️ All Plans', 'admin:quota')]);
@@ -1361,7 +1361,7 @@ bot.command('start', async (ctx) => {
       rows.push([Markup.button.callback('⌨️ Custom Number', `admin:quota:custom:${plan}`)]);
       rows.push([Markup.button.callback('⬅️ Back', `admin:quota:plan:${plan}`)]);
       return await ctx.editMessageText(
-        `✏️ <b>Edit ${title}</b>\\n\\nCurrent limit: <b>${current}/day</b>\\n\\nChoose a new limit or enter a custom number.`,
+        `✏️ <b>Edit ${title}</b>\n\nCurrent limit: <b>${current}/day</b>\n\nChoose a new limit or enter a custom number.`,
         { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) },
       );
     } catch (err) {
@@ -1390,7 +1390,7 @@ bot.command('start', async (ctx) => {
     const label = plan === 'free' ? 'Free' : 'Semi Premium';
     try {
       return await ctx.editMessageText(
-        `✅ <b>${label} quota saved</b>\\n\\nNew limit: <b>${value}/day</b>`,
+        `✅ <b>${label} quota saved</b>\n\nNew limit: <b>${value}/day</b>`,
         { parse_mode: 'HTML', ...Markup.inlineKeyboard([
           [Markup.button.callback('✏️ Edit Again', `admin:quota:edit:${plan}`)],
           [Markup.button.callback('📥 All Plans', 'admin:quota')],
@@ -1413,7 +1413,7 @@ bot.command('start', async (ctx) => {
     try {
       await setAdminSession(ctx.from.id, 'quota', 'awaiting_value', { plan });
       return ctx.reply(
-        `⌨️ <b>Custom ${label} quota</b>\\n\\nSend a whole number from <code>0</code> to <code>100000</code>.\\nSend /cancel to cancel.`,
+        `⌨️ <b>Custom ${label} quota</b>\n\nSend a whole number from <code>0</code> to <code>100000</code>.\nSend /cancel to cancel.`,
         { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin:quota:cancel_custom')]]) },
       );
     } catch (err) {
@@ -1896,7 +1896,7 @@ bot.command('start', async (ctx) => {
         isAdminInChannel
           ? 'The bot can access this channel. Membership checks should work when the bot has the required channel permissions.'
           : 'Add the bot as a channel administrator, then run this test again.',
-      ].join('\\n');
+      ].join('\n');
       return ctx.editMessageText(result, {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
@@ -1917,7 +1917,7 @@ bot.command('start', async (ctx) => {
         '<b>Telegram error:</b> ' + escapeHtml(detail.slice(0, 500)),
         '',
         'Check the channel ID and ensure the bot is added to the channel as an administrator.',
-      ].join('\\n');
+      ].join('\n');
       return ctx.editMessageText(message, {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Test Again', 'settings:forcesub:test:' + channel.id)], [Markup.button.callback('⬅️ Force-sub Settings', 'settings:forcesub')]]),
@@ -2651,7 +2651,7 @@ bot.command('start', async (ctx) => {
         }
         await setAdminSession(ctx.from.id, 'post', 'awaiting_manual_title', { code });
         return ctx.reply(
-          `⚠️ Could not fetch metadata for ${code}: ${errMsg}\\n\\n✍️ Send the post title manually, or use /cancel to stop.\\nThis code has been added to /missedcodes.`
+          `⚠️ Could not fetch metadata for ${code}: ${errMsg}\n\n✍️ Send the post title manually, or use /cancel to stop.\nThis code has been added to /missedcodes.`
         );
       }
     }
