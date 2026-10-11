@@ -31,52 +31,68 @@ setActiveBotRole(config.activeBot);
 
 const START_IMAGES_MANIFEST_URL = 'https://raw.githubusercontent.com/telebottg7-sudo/Cosplay.image/main/image/manifest.json';
 const START_IMAGES_RAW_BASE = 'https://raw.githubusercontent.com/telebottg7-sudo/Cosplay.image/main/image';
-let cachedStartImageLinks: string[] | null = null;
+type StartImageChunk = { path: string; chunk: string };
+let cachedStartImageChunks: StartImageChunk[] | null = null;
+const loadedStartImageChunks = new Set<string>();
+const cachedStartImageLinks: string[] = [];
 let lastStartImageUrl: string | null = null;
 
 async function getRandomStartImageUrl(): Promise<string | null> {
   try {
-    if (!cachedStartImageLinks) {
+    if (!cachedStartImageChunks) {
       const response = await fetch(START_IMAGES_MANIFEST_URL, { signal: AbortSignal.timeout(8000) });
       if (!response.ok) throw new Error(`Image manifest returned HTTP ${response.status}`);
       const manifest = await response.json() as {
         posts?: Array<{ path?: unknown; chunks?: unknown }>;
       };
-      const posts = Array.isArray(manifest.posts)
-        ? manifest.posts.filter((post) =>
-            typeof post.path === 'string' &&
-            Array.isArray(post.chunks) &&
-            post.chunks.some((chunk) => typeof chunk === 'string' && /^[a-zA-Z0-9._-]+\.json$/.test(chunk))
-          )
-        : [];
-
-      // Cache the URL list in memory. Load post chunks only once per process.
-      const urls = new Set<string>();
-      for (const post of posts) {
-        for (const chunk of (post.chunks as string[]).filter((name) => /^[a-zA-Z0-9._-]+\.json$/.test(name))) {
-          try {
-            const chunkUrl = `${START_IMAGES_RAW_BASE}/${post.path}/${chunk}`;
-            const chunkResponse = await fetch(chunkUrl, { signal: AbortSignal.timeout(5000) });
-            if (!chunkResponse.ok) continue;
-            const chunkData: unknown = await chunkResponse.json();
-            if (Array.isArray(chunkData)) {
-              for (const value of chunkData) {
-                if (typeof value === 'string' && /^https?:\/\//i.test(value)) urls.add(value);
-              }
+      cachedStartImageChunks = [];
+      if (Array.isArray(manifest.posts)) {
+        for (const post of manifest.posts) {
+          if (typeof post.path !== 'string' || !Array.isArray(post.chunks)) continue;
+          for (const chunk of post.chunks) {
+            if (typeof chunk === 'string' && /^[a-zA-Z0-9._-]+\.json$/.test(chunk)) {
+              cachedStartImageChunks.push({ path: post.path, chunk });
             }
-          } catch {
-            // Skip unavailable chunks; other archive folders can still provide images.
           }
         }
       }
-      cachedStartImageLinks = [...urls];
-      console.info(`[StartImage] Loaded ${cachedStartImageLinks.length} image URLs from Cosplay.image`);
+      // Shuffle the archive chunk order once, so each request gradually samples different posts.
+      for (let i = cachedStartImageChunks.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [cachedStartImageChunks[i], cachedStartImageChunks[j]] = [cachedStartImageChunks[j], cachedStartImageChunks[i]];
+      }
+    }
+
+    // Fetch only one new archive chunk per /start instead of making dozens of requests at once.
+    // Retry a few chunks if one is temporarily unavailable.
+    let attempts = 0;
+    while (attempts < 3 && loadedStartImageChunks.size < cachedStartImageChunks.length) {
+      const nextChunk = cachedStartImageChunks.find((item) => !loadedStartImageChunks.has(`${item.path}/${item.chunk}`));
+      if (!nextChunk) break;
+      const key = `${nextChunk.path}/${nextChunk.chunk}`;
+      loadedStartImageChunks.add(key);
+      attempts++;
+      try {
+        const chunkUrl = `${START_IMAGES_RAW_BASE}/${encodeURIComponent(nextChunk.path)}/${encodeURIComponent(nextChunk.chunk)}`;
+        const chunkResponse = await fetch(chunkUrl, { signal: AbortSignal.timeout(5000) });
+        if (!chunkResponse.ok) continue;
+        const chunkData: unknown = await chunkResponse.json();
+        if (Array.isArray(chunkData)) {
+          for (const value of chunkData) {
+            if (typeof value === 'string' && /^https?:\/\//i.test(value) && !cachedStartImageLinks.includes(value)) {
+              cachedStartImageLinks.push(value);
+            }
+          }
+        }
+      } catch {
+        // Skip unavailable chunks; the next start can still use cached images.
+      }
     }
 
     if (!cachedStartImageLinks.length) return null;
-    let candidates = cachedStartImageLinks.filter((url) => url !== lastStartImageUrl);
-    if (!candidates.length) candidates = cachedStartImageLinks;
-    const selected = candidates[Math.floor(Math.random() * candidates.length)];
+    const candidates = cachedStartImageLinks.filter((url) => url !== lastStartImageUrl);
+    const pool = candidates.length ? candidates : cachedStartImageLinks;
+    const selected = pool[Math.floor(Math.random() * pool.length)];
     lastStartImageUrl = selected;
     return selected;
   } catch (err) {
@@ -84,7 +100,6 @@ async function getRandomStartImageUrl(): Promise<string | null> {
     return null;
   }
 }
-
 function tokenForRole(role: 'primary' | 'backup'): string {
   return role === 'backup' ? config.backupBotToken : config.botToken;
 }
