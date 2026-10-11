@@ -238,9 +238,15 @@ bot.command('start', async (ctx) => {
 
     const startKeyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🔎 Search Catalog', 'menu:search')],
-      [Markup.button.callback('📊 My Account', 'user:plan'), Markup.button.callback('💎 Premium Plans', 'premium:store')],
-      [Markup.button.callback('🎟️ Redeem Promo', 'user:promo')],
-      [Markup.button.callback('🔗 Refer & Earn', 'user:referral'), Markup.button.callback('🏆 Leaderboard', 'user:leaderboard')],
+      [
+        Markup.button.callback('📊 Account', 'user:plan'),
+        Markup.button.callback('💎 Premium', 'premium:store'),
+        Markup.button.callback('🎟️ Promo', 'user:promo'),
+      ],
+      [
+        Markup.button.callback('🔗 Refer', 'user:referral'),
+        Markup.button.callback('🏆 Leaderboard', 'user:leaderboard'),
+      ],
       [Markup.button.callback('❓ Help & Support', 'menu:help')],
       [Markup.button.url('🌐 Open Website', 'https://piratecultjav.onrender.com/')],
     ]);
@@ -315,9 +321,15 @@ bot.command('start', async (ctx) => {
     ].join('\n');
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🔎 Search Catalog', 'menu:search')],
-      [Markup.button.callback('📊 My Account', 'user:plan'), Markup.button.callback('💎 Premium Plans', 'premium:store')],
-      [Markup.button.callback('🎟️ Redeem Promo', 'user:promo')],
-      [Markup.button.callback('🔗 Refer & Earn', 'user:referral'), Markup.button.callback('🏆 Leaderboard', 'user:leaderboard')],
+      [
+        Markup.button.callback('📊 Account', 'user:plan'),
+        Markup.button.callback('💎 Premium', 'premium:store'),
+        Markup.button.callback('🎟️ Promo', 'user:promo'),
+      ],
+      [
+        Markup.button.callback('🔗 Refer', 'user:referral'),
+        Markup.button.callback('🏆 Leaderboard', 'user:leaderboard'),
+      ],
       [Markup.button.callback('❓ Help & Support', 'menu:help')],
       [Markup.button.url('🌐 Open Website', 'https://piratecultjav.onrender.com/')],
     ]);
