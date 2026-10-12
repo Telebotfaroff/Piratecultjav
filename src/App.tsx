@@ -299,13 +299,6 @@ function VideoDetails({
               </div>
             )}
 
-            {(video.description || metadata.description) && (
-              <div className="mt-7">
-                <h2 className="text-sm font-semibold text-slate-300">Description</h2>
-                <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-500">{video.description || metadata.description}</p>
-              </div>
-            )}
-
             <div className="mt-8">
               {botUrl ? (
                 <a href={botUrl} target="_blank" rel="noreferrer" className="inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-950/30 hover:bg-indigo-500 sm:w-auto">
