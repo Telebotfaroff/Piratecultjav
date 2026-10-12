@@ -327,14 +327,23 @@ export function createApp(): express.Express {
       }
 
       if (!upstream.ok) return res.status(502).send('Telegram image could not be retrieved');
-      const contentType = (upstream.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
-        return res.status(415).send('Unsupported screenshot image type');
-      }
-
+      const upstreamType = (upstream.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
       const bytes = Buffer.from(await upstream.arrayBuffer());
       if (!bytes.length || bytes.length > 10 * 1024 * 1024) {
         return res.status(413).send('Screenshot image is too large');
+      }
+
+      // Telegram's file server can return application/octet-stream even for valid photos.
+      // Validate the actual file signature instead of trusting only the response header.
+      let contentType = upstreamType;
+      if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+        contentType = 'image/jpeg';
+      } else if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+        contentType = 'image/png';
+      } else if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') {
+        contentType = 'image/webp';
+      } else if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
+        return res.status(415).send('Unsupported screenshot image type');
       }
 
       res.setHeader('Content-Type', contentType);
