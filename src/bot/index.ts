@@ -2418,13 +2418,43 @@ bot.command('start', async (ctx) => {
     await handleSearchQuery(ctx, query, page);
   });
 
-  // 11. Dump Channel listener for automated indexing.
-  // IMPORTANT: webhook setup must explicitly subscribe to channel_post updates.
+  // 11. Private screenshot channel + video dump channel listeners.
+  // The screenshot channel should contain one photo per post, captioned with its video code.
+  // Webhook mode subscribes to channel_post updates below; polling receives them automatically.
   bot.on('channel_post', async (ctx) => {
     const post = ctx.channelPost;
     const chatId = String(ctx.chat.id).trim();
-    const configuredDumpChatId = String(config.dumpChatId || '').trim();
+    const configuredScreenshotChatId = String(config.screenshotChatId || '').trim();
 
+    if (configuredScreenshotChatId && chatId === configuredScreenshotChatId) {
+      if (!('photo' in post) || !post.photo?.length) return;
+      const caption = String(('caption' in post ? post.caption : '') || '').trim();
+      const codes = extractCodes(caption);
+      if (codes.length !== 1) {
+        console.warn(`[Screenshot] Ignored photo #${post.message_id}: caption must contain exactly one video code.`);
+        return;
+      }
+
+      const photo = post.photo[post.photo.length - 1];
+      try {
+        const { saveScreenshotImage } = await import('../services/screenshotImages.ts');
+        await saveScreenshotImage({
+          code: codes[0],
+          normalizedCode: normalizeCode(codes[0]) || codes[0],
+          channelId: chatId,
+          messageId: post.message_id,
+          fileId: photo.file_id,
+          width: photo.width,
+          height: photo.height,
+        });
+        console.log(`[Screenshot] Indexed image #${post.message_id} for ${codes[0]}.`);
+      } catch (err) {
+        console.error(`[Screenshot] Failed to index photo #${post.message_id}:`, err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+
+    const configuredDumpChatId = String(config.dumpChatId || '').trim();
     if (configuredDumpChatId && chatId !== configuredDumpChatId) {
       return;
     }
