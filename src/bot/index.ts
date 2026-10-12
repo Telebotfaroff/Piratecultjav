@@ -2419,7 +2419,43 @@ bot.command('start', async (ctx) => {
   });
 
   // 11. Private screenshot channel + video dump channel listeners.
-  // The screenshot channel should contain one photo per post, captioned with its video code.
+  // Telegram albums arrive as separate channel_post updates. Buffer each media group
+  // briefly so every photo can inherit the album's video code if its own caption is
+  // missing or formatted in a way the code extractor doesn't recognize.
+  const screenshotAlbums = new Map<string, {
+    chatId: string;
+    code: string | null;
+    photos: Array<{ messageId: number; fileId: string; width: number; height: number }>;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+
+  async function saveScreenshotAlbum(key: string): Promise<void> {
+    const album = screenshotAlbums.get(key);
+    if (!album) return;
+    screenshotAlbums.delete(key);
+    if (!album.code) {
+      console.warn(`[Screenshot] Ignored album ${key}: no recognizable video code in any caption.`);
+      return;
+    }
+    try {
+      const { saveScreenshotImage } = await import('../services/screenshotImages.ts');
+      for (const photo of album.photos) {
+        await saveScreenshotImage({
+          code: album.code,
+          normalizedCode: normalizeCode(album.code) || album.code,
+          channelId: album.chatId,
+          messageId: photo.messageId,
+          fileId: photo.fileId,
+          width: photo.width,
+          height: photo.height,
+        });
+        console.log(`[Screenshot] Indexed image #${photo.messageId} for ${album.code}.`);
+      }
+    } catch (err) {
+      console.error(`[Screenshot] Failed to index album ${key}:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+
   // Webhook mode subscribes to channel_post updates below; polling receives them automatically.
   bot.on('channel_post', async (ctx) => {
     const post = ctx.channelPost;
@@ -2430,12 +2466,36 @@ bot.command('start', async (ctx) => {
       if (!('photo' in post) || !post.photo?.length) return;
       const caption = String(('caption' in post ? post.caption : '') || '').trim();
       const codes = extractCodes(caption);
+      const photo = post.photo[post.photo.length - 1];
+      const mediaGroupId = 'media_group_id' in post ? post.media_group_id : undefined;
+
+      if (mediaGroupId) {
+        const key = `${chatId}:${mediaGroupId}`;
+        let album = screenshotAlbums.get(key);
+        if (!album) {
+          const timer = setTimeout(() => { void saveScreenshotAlbum(key); }, 2000);
+          album = { chatId, code: null, photos: [], timer };
+          screenshotAlbums.set(key, album);
+        } else {
+          clearTimeout(album.timer);
+          album.timer = setTimeout(() => { void saveScreenshotAlbum(key); }, 2000);
+        }
+        if (codes.length === 1) album.code = codes[0];
+        else if (codes.length > 1) console.warn(`[Screenshot] Album ${key} has a caption with multiple video codes; using a valid code from another album caption if available.`);
+        album.photos.push({
+          messageId: post.message_id,
+          fileId: photo.file_id,
+          width: photo.width,
+          height: photo.height,
+        });
+        return;
+      }
+
       if (codes.length !== 1) {
         console.warn(`[Screenshot] Ignored photo #${post.message_id}: caption must contain exactly one video code.`);
         return;
       }
 
-      const photo = post.photo[post.photo.length - 1];
       try {
         const { saveScreenshotImage } = await import('../services/screenshotImages.ts');
         await saveScreenshotImage({
