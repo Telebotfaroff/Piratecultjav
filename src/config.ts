@@ -8,6 +8,7 @@ export interface AppConfig {
   supabaseUrl: string;
   supabaseSecretKey: string;
   dumpChatId: string;
+  screenshotChatId: string;
   adminIds: number[];
   javtifulBaseUrl: string;
   port: number;
@@ -36,6 +37,7 @@ export const config: AppConfig = {
   supabaseUrl: process.env.SUPABASE_URL || '',
   supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || '',
   dumpChatId: process.env.DUMP_CHAT_ID || '-1004426377644',
+  screenshotChatId: process.env.SCREENSHOT_CHANNEL_ID || '',
   adminIds,
   javtifulBaseUrl: (process.env.JAVTIFUL_BASE_URL || 'https://javtiful.com').replace(/\/$/, ''),
   port: parseInt(process.env.PORT || '3000', 10),
