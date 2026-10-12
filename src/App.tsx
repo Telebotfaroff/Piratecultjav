@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Film, Search, X } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Film, Image as ImageIcon, Search, X } from 'lucide-react';
 
 interface VideoMetadata {
   duration?: string | null;
@@ -17,6 +17,15 @@ interface VideoRecord {
   title: string;
   description?: string | null;
   metadata: VideoMetadata;
+}
+
+interface ScreenshotRecord {
+  id: string;
+  code: string;
+  width: number | null;
+  height: number | null;
+  createdAt: string;
+  url: string;
 }
 
 const PAGE_SIZE = 24;
@@ -149,6 +158,9 @@ function VideoDetails({
   const [loading, setLoading] = useState(!initialVideo);
   const [error, setError] = useState('');
   const [viewMode, setViewMode] = useState<'cover' | 'scene'>('cover');
+  const [screenshots, setScreenshots] = useState<ScreenshotRecord[]>([]);
+  const [screenshotsLoading, setScreenshotsLoading] = useState(false);
+  const [selectedScreenshot, setSelectedScreenshot] = useState<ScreenshotRecord | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,6 +190,27 @@ function VideoDetails({
 
     return () => { cancelled = true; };
   }, [id, initialVideo]);
+
+  useEffect(() => {
+    if (!video?.code) return;
+    let cancelled = false;
+    setScreenshotsLoading(true);
+    fetch('/api/screenshots/' + encodeURIComponent(video.code))
+      .then(async response => {
+        if (!response.ok) throw new Error('Could not load screenshots');
+        return response.json();
+      })
+      .then(data => {
+        if (!cancelled) setScreenshots(Array.isArray(data.images) ? data.images : []);
+      })
+      .catch(() => {
+        if (!cancelled) setScreenshots([]);
+      })
+      .finally(() => {
+        if (!cancelled) setScreenshotsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [video?.code]);
 
   if (loading) {
     return (
@@ -310,6 +343,68 @@ function VideoDetails({
             </div>
           </section>
         </main>
+
+        <section className="mt-10 border-t border-slate-800 pt-7" aria-labelledby="screenshots-heading">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 id="screenshots-heading" className="flex items-center gap-2 text-lg font-semibold">
+                <ImageIcon className="h-5 w-5 text-indigo-400" /> Screenshots
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {screenshotsLoading ? 'Loading screenshots…' : screenshots.length ? `${screenshots.length} screenshot${screenshots.length === 1 ? '' : 's'}` : 'No screenshots have been indexed for this video yet.'}
+              </p>
+            </div>
+          </div>
+
+          {screenshots.length > 0 && (
+            <div className="mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3">
+              {screenshots.map((screenshot, index) => (
+                <button
+                  key={screenshot.id}
+                  type="button"
+                  onClick={() => setSelectedScreenshot(screenshot)}
+                  className="group relative w-[78vw] max-w-sm shrink-0 snap-start overflow-hidden rounded-xl border border-slate-800 bg-slate-900 text-left sm:w-80"
+                  aria-label={`View screenshot ${index + 1} of ${screenshots.length}`}
+                >
+                  <img
+                    src={screenshot.url}
+                    alt={`${video.code} screenshot ${index + 1}`}
+                    loading="lazy"
+                    className="aspect-video w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                  />
+                  <span className="absolute bottom-2 right-2 rounded-md bg-black/75 px-2 py-1 text-xs text-white">
+                    {index + 1} / {screenshots.length}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {selectedScreenshot && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 p-3 sm:p-8"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Screenshot viewer"
+            onClick={() => setSelectedScreenshot(null)}
+          >
+            <button
+              type="button"
+              onClick={() => setSelectedScreenshot(null)}
+              className="absolute right-3 top-3 z-10 rounded-full bg-slate-800/90 p-2.5 text-white hover:bg-slate-700"
+              aria-label="Close screenshot viewer"
+            >
+              <X className="h-6 w-6" />
+            </button>
+            <img
+              src={selectedScreenshot.url}
+              alt={`${video.code} screenshot`}
+              className="max-h-[90vh] max-w-full rounded-lg object-contain"
+              onClick={event => event.stopPropagation()}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
