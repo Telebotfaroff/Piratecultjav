@@ -357,22 +357,25 @@ function VideoDetails({
           </div>
 
           {screenshots.length > 0 && (
-            <div className="mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3">
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:gap-3">
               {screenshots.map((screenshot, index) => (
                 <button
                   key={screenshot.id}
                   type="button"
                   onClick={() => setSelectedScreenshot(screenshot)}
-                  className="group relative w-[78vw] max-w-sm shrink-0 snap-start overflow-hidden rounded-xl border border-slate-800 bg-slate-900 text-left sm:w-80"
+                  className="group relative min-w-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 text-left"
                   aria-label={`View screenshot ${index + 1} of ${screenshots.length}`}
                 >
                   <img
                     src={screenshot.url}
                     alt={`${video.code} screenshot ${index + 1}`}
-                    loading="lazy"
+                    loading={index < 4 ? 'eager' : 'lazy'}
                     className="aspect-video w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                    onError={(event) => {
+                      event.currentTarget.alt = 'Screenshot could not be loaded';
+                    }}
                   />
-                  <span className="absolute bottom-2 right-2 rounded-md bg-black/75 px-2 py-1 text-xs text-white">
+                  <span className="absolute bottom-1.5 right-1.5 rounded-md bg-black/75 px-2 py-1 text-xs text-white">
                     {index + 1} / {screenshots.length}
                   </span>
                 </button>
