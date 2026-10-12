@@ -12,6 +12,7 @@ import { extractCodes, normalizeCode } from './services/code.ts';
 import { getAllSettings, setSetting } from './services/settings.ts';
 import { isBotActive, getBot, getBotUsername } from './bot/index.ts';
 import { indexerWorker } from './workers/indexer.ts';
+import { getScreenshotImagesByCode, getScreenshotImageById } from './services/screenshotImages.ts';
 
 const adminSessions = new Map<string, number>();
 
@@ -276,6 +277,75 @@ export function createApp(): express.Express {
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ ok: false, error: errMsg });
+    }
+  });
+
+  // Screenshot gallery API. Telegram file IDs and channel identifiers stay server-side.
+  app.get('/api/screenshots/:code', publicRateLimit, async (req: Request, res: Response) => {
+    try {
+      const code = normalizeCode(String(req.params.code || ''));
+      if (!code) return res.status(400).json({ ok: false, error: 'Invalid video code' });
+
+      const images = await getScreenshotImagesByCode(code, 60);
+      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+      return res.json({
+        ok: true,
+        code,
+        total: images.length,
+        images: images.map(image => ({
+          id: image.id,
+          code: image.code,
+          width: image.width,
+          height: image.height,
+          createdAt: image.created_at,
+          url: '/api/screenshots/' + image.id + '/image',
+        })),
+      });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return res.status(500).json({ ok: false, error: errMsg });
+    }
+  });
+
+  // Securely proxy a known indexed Telegram photo. Never send Telegram file URLs/tokens to the browser.
+  app.get('/api/screenshots/:id/image', publicRateLimit, async (req: Request, res: Response) => {
+    try {
+      const image = await getScreenshotImageById(String(req.params.id || ''));
+      if (!image) return res.status(404).send('Screenshot not found');
+
+      const bot = getBot();
+      if (!bot) return res.status(503).send('Telegram image service is unavailable');
+
+      const fileUrl = await bot.telegram.getFileLink(image.file_id);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      let upstream: globalThis.Response;
+      try {
+        upstream = await fetch(fileUrl.toString(), { signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      if (!upstream.ok) return res.status(502).send('Telegram image could not be retrieved');
+      const contentType = (upstream.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
+        return res.status(415).send('Unsupported screenshot image type');
+      }
+
+      const bytes = Buffer.from(await upstream.arrayBuffer());
+      if (!bytes.length || bytes.length > 10 * 1024 * 1024) {
+        return res.status(413).send('Screenshot image is too large');
+      }
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', String(bytes.length));
+      res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.status(200).send(bytes);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn('[Screenshots] Image proxy failed:', errMsg);
+      return res.status(502).send('Unable to load screenshot image');
     }
   });
 
