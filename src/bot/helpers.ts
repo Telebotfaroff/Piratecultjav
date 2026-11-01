@@ -1,10 +1,10 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { Telegraf, Markup } from 'telegraf';
 import { config, isAdmin } from '../config.ts';
 import { normalizeCode, cleanActressList, cleanTitle } from '../services/code.ts';
 import { searchVideos, getVideoById, getVideoByCode, countVideos, updateVideoMetadata, deleteVideo, updateVideoStatus } from '../services/videos.ts';
 import { countJobs } from '../services/indexJobs.ts';
-import { consumeVideoDownload, refundVideoDownload, getUserDashboard, getReferralLeaderboard, completeReferral, countUsers } from '../services/users.ts';
+import { consumeVideoDownload, refundVideoDownload, markVideoDownloadDelivered, getUserDashboard, getReferralLeaderboard, completeReferral, countUsers } from '../services/users.ts';
 import { checkUserForceSub, getAllForceSubChannels } from '../services/forceSub.ts';
 import { getSetting, setSetting } from '../services/settings.ts';
 import { sendDumpVideoToUser } from '../services/dump.ts';
@@ -51,6 +51,7 @@ async function notifyNotFound(ctx: any, query: string, source: string): Promise<
 
 async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, source: 'deep_link' | 'search' | 'callback' | 'unknown' = 'unknown', options: { suppressDeleteReminderMessage?: boolean } = {}) {
   let quotaConsumed = false;
+  let quotaReservationId: string | null = null;
   try {
     await recordVideoDeliveryEvent({ eventType: 'attempt', telegramUserId: ctx.from?.id, source });
     const rawCode = identifier.trim();
@@ -112,7 +113,8 @@ async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, s
     // Admins are exempt. This also covers direct /start CODE links.
     if (ctx.from && !isAdmin(ctx.from.id)) {
       try {
-        const allowance = await consumeVideoDownload(ctx.from.id);
+        quotaReservationId = randomUUID();
+        const allowance = await consumeVideoDownload(ctx.from.id, quotaReservationId);
         if (!allowance.allowed) {
           const planText = allowance.plan === 'semi_premium' ? 'Semi Premium (40/day)' : 'Free (20/day)';
           await recordVideoDeliveryEvent({ eventType: 'limit_block', telegramUserId: ctx.from?.id, videoId: video.id, code: video.code, source });
@@ -154,6 +156,17 @@ async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, s
       video.video_message_id,
       `🎬 *${video.code}* - ${video.title}${deleteReminder}`
     );
+
+    // Telegram has accepted the copy: never refund this quota even if the
+    // follow-up bookkeeping RPC is temporarily unavailable.
+    quotaConsumed = false;
+    if (quotaReservationId) {
+      try {
+        await markVideoDownloadDelivered(quotaReservationId);
+      } catch (reservationError) {
+        console.error('[Quota] Video was delivered but reservation confirmation failed:', reservationError);
+      }
+    }
 
     await recordVideoDeliveryEvent({ eventType: 'delivered', telegramUserId: ctx.from?.id, videoId: video.id, code: video.code, source, success: true });
 
@@ -197,7 +210,9 @@ async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, s
     console.error(`[TelegramBot] Failed direct video delivery for ${identifier}:`, errMsg);
     if (quotaConsumed && ctx.from && !isAdmin(ctx.from.id)) {
       try {
-        const refunded = await refundVideoDownload(ctx.from.id);
+        const refunded = quotaReservationId
+          ? await refundVideoDownload(ctx.from.id, quotaReservationId)
+          : false;
         if (!refunded) console.warn('[Quota] Could not refund consumed allowance after failed delivery.');
       } catch (refundErr) {
         console.error('[Quota] Refund failed after delivery error:', refundErr);
