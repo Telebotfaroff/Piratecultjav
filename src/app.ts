@@ -406,9 +406,18 @@ export function createApp(): express.Express {
       const query = ((req.query.q as string) || '').trim().slice(0, PUBLIC_SEARCH_MAX_LENGTH);
       const limit = Math.min(Math.max(parseInt((req.query.limit as string) || '20', 10) || 20, 1), 50);
       const offset = Math.min(Math.max(parseInt((req.query.offset as string) || '0', 10) || 0, 0), 100000);
+      // Exact counts are expensive on large catalogs. Fetch them on the first
+      // page (or when explicitly requested), then reuse the client-held total.
+      const includeTotal = req.query.includeTotal === 'true'
+        || (req.query.includeTotal !== 'false' && offset === 0);
 
-      const result = await searchVideos(query, limit, offset);
-      res.json({ ok: true, videos: result.videos.map(toPublicVideo), total: result.total });
+      const result = await searchVideos(query, limit, offset, includeTotal);
+      const payload: { ok: boolean; videos: ReturnType<typeof toPublicVideo>[]; total?: number } = {
+        ok: true,
+        videos: result.videos.map(toPublicVideo),
+      };
+      if (includeTotal) payload.total = result.total;
+      res.json(payload);
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ ok: false, error: errMsg });
