@@ -85,7 +85,7 @@ export function getHttpMetrics(): {
     requests: totalRequests,
     serverErrors: totalErrors,
     averageDurationMs: routeMetrics.size
-      ? Number(Array.from(routeMetrics.values()).reduce((sum, metric) => sum + metric.totalDurationMs, 0) / Math.max(1, totalRequests).toFixed(2))
+      ? Number((Array.from(routeMetrics.values()).reduce((sum, metric) => sum + metric.totalDurationMs, 0) / Math.max(1, totalRequests)).toFixed(2))
       : 0,
     routes: Array.from(routeMetrics.values()).map((metric) => ({
       method: metric.method,
