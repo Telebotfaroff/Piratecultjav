@@ -36,9 +36,13 @@ export class IndexerWorker {
     console.log(`[IndexerWorker] Started with concurrency=${this.concurrency}, lease=${this.leaseSeconds}s.`);
   }
 
-  public stop(): void {
+  public async stop(): Promise<void> {
+    if (!this.isRunning && this.loops.length === 0) return;
     this.isRunning = false;
-    console.log('[IndexerWorker] Stop requested; active jobs will finish or lose their lease.');
+    console.log('[IndexerWorker] Stop requested; waiting for active jobs to finish.');
+    await Promise.allSettled(this.loops);
+    this.loops = [];
+    console.log('[IndexerWorker] Worker stopped cleanly.');
   }
 
   public getStatus(): { isRunning: boolean; pollIntervalMs: number; concurrency: number; activeJobs: number; leaseSeconds: number } {

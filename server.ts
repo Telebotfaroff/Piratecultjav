@@ -3,7 +3,7 @@ import express from 'express';
 import { createApp } from './src/app.ts';
 import { config } from './src/config.ts';
 import { indexerWorker } from './src/workers/indexer.ts';
-import { startBotPolling, startBotWebhook } from './src/bot/index.ts';
+import { startBotPolling, startBotWebhook, stopBotRuntime } from './src/bot/index.ts';
 
 async function startServer() {
   const app = createApp();
@@ -48,7 +48,7 @@ async function startServer() {
   // Start background services
   indexerWorker.start();
   
-  app.listen(port, '0.0.0.0', () => {
+  const httpServer = app.listen(port, '0.0.0.0', () => {
     console.log(`[PiratecultJAV] Server running on http://0.0.0.0:${port}`);
     console.log(`[PiratecultJAV] Health check available at http://0.0.0.0:${port}/health`);
 
@@ -64,6 +64,39 @@ async function startServer() {
       console.log('[Server] BOT_TOKEN / BACKUP_BOT_TOKEN not provided; Telegram bot inactive.');
     }
   });
+
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[Server] ${signal} received; beginning graceful shutdown.`);
+
+    const forceExitTimer = setTimeout(() => {
+      console.error('[Server] Graceful shutdown timed out; forcing exit.');
+      httpServer.closeAllConnections();
+      process.exit(1);
+    }, 15_000);
+    forceExitTimer.unref();
+
+    // Stop accepting new HTTP requests, stop Telegram updates, and let claimed
+    // index jobs finish while their lease heartbeats remain active.
+    const httpClosed = new Promise<void>(resolve => {
+      httpServer.close(() => resolve());
+    });
+
+    await Promise.allSettled([
+      stopBotRuntime(),
+      indexerWorker.stop(),
+      httpClosed,
+    ]);
+
+    clearTimeout(forceExitTimer);
+    console.log('[Server] Graceful shutdown complete.');
+    process.exit(0);
+  };
+
+  process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.once('SIGINT', () => { void shutdown('SIGINT'); });
 }
 
 startServer().catch(err => {

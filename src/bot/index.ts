@@ -27,6 +27,12 @@ let isPollingActive = false;
 let isWebhookActive = false;
 let webhookApp: Express | null = null;
 let webhookRouteRegistered = false;
+let pollingLaunchGeneration = 0;
+let runtimeFailoverAttempted = false;
+let runtimeHealthTimer: ReturnType<typeof setInterval> | null = null;
+let runtimeFailoverInProgress = false;
+let runtimeHealthFailures = 0;
+let runtimeHealthCheckInProgress = false;
 setActiveBotRole(config.activeBot);
 
 const START_IMAGES_MANIFEST_URL = 'https://raw.githubusercontent.com/telebottg7-sudo/Cosplay.image/main/image/manifest.json';
@@ -3010,6 +3016,47 @@ export function getBot(): Telegraf | null {
 }
 
 
+async function failoverToBackup(reason: string): Promise<boolean> {
+  if (runtimeFailoverInProgress || runtimeFailoverAttempted || getStoredActiveBotRole() !== 'primary' || !tokenForRole('backup')) {
+    console.error('[TelegramBot] Automatic backup failover unavailable or already attempted.');
+    return false;
+  }
+  runtimeFailoverInProgress = true;
+  runtimeFailoverAttempted = true;
+  console.error(`[TelegramBot] Primary bot runtime failure: ${reason}. Switching to backup bot.`);
+  try {
+    return await switchBotRole('backup');
+  } finally {
+    runtimeFailoverInProgress = false;
+  }
+}
+
+function startRuntimeHealthMonitor(): void {
+  if (runtimeHealthTimer) clearInterval(runtimeHealthTimer);
+  runtimeHealthTimer = setInterval(async () => {
+    const monitoredBot = botInstance;
+    const monitoredRole = getStoredActiveBotRole();
+    if (!monitoredBot || (!isPollingActive && !isWebhookActive) || runtimeHealthCheckInProgress) return;
+    runtimeHealthCheckInProgress = true;
+    try {
+      await monitoredBot.telegram.getMe();
+      runtimeHealthFailures = 0;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (monitoredBot !== botInstance || monitoredRole !== getStoredActiveBotRole()) return;
+      runtimeHealthFailures++;
+      console.warn(`[TelegramBot] ${monitoredRole} health check failed (${runtimeHealthFailures}/2): ${message}`);
+      if (runtimeHealthFailures >= 2) {
+        runtimeHealthFailures = 0;
+        await failoverToBackup(message);
+      }
+    } finally {
+      runtimeHealthCheckInProgress = false;
+    }
+  }, 60_000);
+  runtimeHealthTimer.unref?.();
+}
+
 export async function startBotPolling(): Promise<boolean> {
   if (isWebhookActive) {
     console.log('[TelegramBot] Webhook mode is already active.');
@@ -3020,6 +3067,7 @@ export async function startBotPolling(): Promise<boolean> {
     return true;
   }
 
+  const launchGeneration = ++pollingLaunchGeneration;
   let role = availableRole(getStoredActiveBotRole());
   if (!role) {
     console.log('[TelegramBot] No bot token configured. Polling not started.');
@@ -3064,7 +3112,7 @@ export async function startBotPolling(): Promise<boolean> {
   };
 
   let bot = await validateAndBuild(role);
-  if (!bot) {
+  if (!bot && !runtimeFailoverAttempted) {
     const fallback = role === 'primary' ? 'backup' : 'primary';
     if (!tokenForRole(fallback)) return false;
     console.warn(`[TelegramBot] Falling back from ${role} to ${fallback} bot.`);
@@ -3085,11 +3133,16 @@ export async function startBotPolling(): Promise<boolean> {
     await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(err => {
       console.warn('[TelegramBot] Could not clear an existing webhook before polling:', err instanceof Error ? err.message : String(err));
     });
-    bot.launch({ dropPendingUpdates: false }).catch(err => {
-      console.error('[TelegramBot] Polling error:', err?.message || err);
+    bot.launch({ dropPendingUpdates: false }).catch(async err => {
+      if (launchGeneration !== pollingLaunchGeneration || botInstance !== bot) return;
       isPollingActive = false;
+      botInstance = null;
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[TelegramBot] Polling error:', message);
+      if (role === 'primary') await failoverToBackup(message);
     });
     isPollingActive = true;
+    startRuntimeHealthMonitor();
     console.log(`[TelegramBot] ${role.toUpperCase()} bot polling started successfully.`);
     return true;
   } catch (err: unknown) {
@@ -3149,7 +3202,7 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
   };
 
   let bot = await validateAndBuild(role);
-  if (!bot) {
+  if (!bot && !runtimeFailoverAttempted) {
     const fallback = role === 'primary' ? 'backup' : 'primary';
     if (!tokenForRole(fallback)) return false;
     console.warn(`[TelegramBot] Falling back from ${role} to ${fallback} bot for webhook mode.`);
@@ -3186,6 +3239,7 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
     });
     isWebhookActive = true;
     isPollingActive = false;
+    startRuntimeHealthMonitor();
     console.log(`[TelegramBot] Webhook enabled at ${webhookUrl}`);
     return true;
   } catch (err: unknown) {
@@ -3202,6 +3256,8 @@ export function isBotRoleConfigured(role: 'primary' | 'backup'): boolean {
 
 export async function switchBotRole(role: 'primary' | 'backup'): Promise<boolean> {
   if (!tokenForRole(role)) return false;
+  if (!runtimeFailoverInProgress) runtimeFailoverAttempted = false;
+  runtimeHealthFailures = 0;
   const previousBot = botInstance;
   if (isWebhookActive && previousBot) {
     await previousBot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => undefined);
@@ -3216,6 +3272,7 @@ export async function switchBotRole(role: 'primary' | 'backup'): Promise<boolean
 }
 
 export function stopBotPolling(): void {
+  pollingLaunchGeneration++;
   if (botInstance && isPollingActive) {
     try {
       botInstance.stop('Stopping bot instance');
@@ -3225,6 +3282,25 @@ export function stopBotPolling(): void {
     isPollingActive = false;
     console.log('[TelegramBot] Bot polling stopped.');
   }
+}
+
+export async function stopBotRuntime(): Promise<void> {
+  if (runtimeHealthTimer) {
+    clearInterval(runtimeHealthTimer);
+    runtimeHealthTimer = null;
+  }
+  const activeBot = botInstance;
+  if (isWebhookActive && activeBot) {
+    await activeBot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(err => {
+      console.warn('[TelegramBot] Could not clear webhook during shutdown:', err instanceof Error ? err.message : String(err));
+    });
+  }
+  isWebhookActive = false;
+  runtimeHealthFailures = 0;
+  stopBotPolling();
+  botInstance = null;
+  isPollingActive = false;
+  console.log('[TelegramBot] Runtime stopped.');
 }
 
 export function isBotActive(): boolean {

@@ -81,6 +81,14 @@ The background indexer uses Supabase PostgreSQL for atomic job claiming and rene
 
 Each worker slot has a unique owner ID. Jobs are claimed with PostgreSQL `FOR UPDATE SKIP LOCKED`, heartbeats renew active leases, and recovery only requeues expired leases. Increase concurrency gradually and monitor provider rate limits and Supabase load.
 
+## Runtime resilience and graceful shutdown
+
+When both `BOT_TOKEN` and `BACKUP_BOT_TOKEN` are configured, startup validates the selected bot and can fall back to the other token if validation fails. During polling, a runtime launch failure on the primary bot triggers one automatic switch to the backup bot per process. Webhook and polling modes also run a Telegram token-health check every 60 seconds; two consecutive failures can trigger the same one-time primary-to-backup switch. The backup bot must be an administrator in the dump channel and have the same required channel permissions. Keep the primary and backup bot tokens separate and rotate them independently.
+
+On `SIGTERM` or `SIGINT`, the server stops accepting new HTTP connections, removes the active webhook or stops polling, and asks the indexer to finish its claimed jobs before exiting. The shutdown has a 15-second hard timeout; jobs that cannot finish are recovered later through their expired leases.
+
+A runtime failover is intentionally one-way and limited to one attempt per process to avoid flapping. After correcting the primary bot issue, restart the service or manually switch back from the admin controls.
+
 ## HTTP endpoints
 
 - `/health` — basic process health
