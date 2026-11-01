@@ -79,11 +79,12 @@ export async function getVideoByCode(code: string): Promise<VideoRecord | null> 
 }
 
 export async function getVideoById(id: string): Promise<VideoRecord | null> {
-  // The videos.id column is PostgreSQL BIGINT; never send codes or deep-link prefixes to it.
-  if (!/^\d+$/.test(String(id).trim())) return null;
+  // The videos.id column is PostgreSQL UUID.
+  const normalizedId = String(id).trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedId)) return null;
 
   const supabase = getSupabase();
-  const { data, error } = await supabase.from('videos').select('*').eq('id', id).maybeSingle();
+  const { data, error } = await supabase.from('videos').select('*').eq('id', normalizedId).maybeSingle();
 
   if (error) throw new Error('Database error fetching video by id: ' + error.message);
   return (data as VideoRecord) || null;
