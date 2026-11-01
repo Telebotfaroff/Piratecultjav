@@ -33,6 +33,8 @@ let runtimeHealthTimer: ReturnType<typeof setInterval> | null = null;
 let runtimeFailoverInProgress = false;
 let runtimeHealthFailures = 0;
 let runtimeHealthCheckInProgress = false;
+let pendingNotFoundWatcher: ReturnType<typeof setInterval> | null = null;
+let pendingNotFoundCheckBusy = false;
 setActiveBotRole(config.activeBot);
 
 const START_IMAGES_MANIFEST_URL = 'https://raw.githubusercontent.com/telebottg7-sudo/Cosplay.image/main/image/manifest.json';
@@ -152,9 +154,11 @@ function createBot(token: string): Telegraf {
   bot.action('notfound:watching', async (ctx) => ctx.answerCbQuery('This request is already being watched.'));
 
   // Poll pending requests in the settings store and notify users once a matching catalog result exists.
-  if (!(globalThis as any).__pendingNotFoundWatcher) {
-    (globalThis as any).__pendingNotFoundWatcher = setInterval(async () => {
-      try {
+  if (pendingNotFoundWatcher) clearInterval(pendingNotFoundWatcher);
+  pendingNotFoundWatcher = setInterval(async () => {
+    if (pendingNotFoundCheckBusy) return;
+    pendingNotFoundCheckBusy = true;
+    try {
         const pending = await getSetting<any[]>('pending_not_found_notifications', []);
         if (!Array.isArray(pending) || pending.length === 0) return;
         const remaining: any[] = [];
@@ -194,12 +198,13 @@ function createBot(token: string): Telegraf {
           }
         }
         await setSetting('pending_not_found_notifications', remaining.slice(-500));
-      } catch (err) {
-        console.warn('[NotFoundWatch] Poll failed:', err instanceof Error ? err.message : String(err));
-      }
-    }, 120_000);
-    (globalThis as any).__pendingNotFoundWatcher.unref?.();
-  }
+    } catch (err) {
+      console.warn('[NotFoundWatch] Poll failed:', err instanceof Error ? err.message : String(err));
+    } finally {
+      pendingNotFoundCheckBusy = false;
+    }
+  }, 120_000);
+  pendingNotFoundWatcher.unref?.();
 
   // 2. Start command
   bot.command('dashboard', async (ctx) => sendUserPlan(ctx));
@@ -3291,6 +3296,10 @@ export function stopBotPolling(): void {
 }
 
 export async function stopBotRuntime(): Promise<void> {
+  if (pendingNotFoundWatcher) {
+    clearInterval(pendingNotFoundWatcher);
+    pendingNotFoundWatcher = null;
+  }
   if (runtimeHealthTimer) {
     clearInterval(runtimeHealthTimer);
     runtimeHealthTimer = null;
