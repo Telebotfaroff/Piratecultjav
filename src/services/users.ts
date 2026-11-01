@@ -1,4 +1,5 @@
 import { getSupabase } from '../database/supabase.ts';
+import { getSetting } from './settings.ts';
 
 export interface UserRecord {
   id: string;
@@ -115,16 +116,9 @@ export interface DownloadQuotaSettings {
 const DEFAULT_DOWNLOAD_QUOTAS: DownloadQuotaSettings = { free: 20, semi_premium: 40 };
 
 export async function getDownloadQuotaSettings(): Promise<DownloadQuotaSettings> {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('bot_settings')
-    .select('value')
-    .eq('key', 'download_quotas')
-    .maybeSingle();
-  if (error || !data || !data.value || typeof data.value !== 'object') {
-    return { ...DEFAULT_DOWNLOAD_QUOTAS };
-  }
-  const value = data.value as Record<string, unknown>;
+  // Cache only the configuration value; actual quota consumption remains atomic/live.
+  const value = await getSetting<Record<string, unknown>>('download_quotas', DEFAULT_DOWNLOAD_QUOTAS);
+  if (!value || typeof value !== 'object') return { ...DEFAULT_DOWNLOAD_QUOTAS };
   const free = Number(value.free);
   const semiPremium = Number(value.semi_premium);
   return {
