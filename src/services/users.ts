@@ -117,7 +117,7 @@ const DEFAULT_DOWNLOAD_QUOTAS: DownloadQuotaSettings = { free: 20, semi_premium:
 
 export async function getDownloadQuotaSettings(): Promise<DownloadQuotaSettings> {
   // Cache only the configuration value; actual quota consumption remains atomic/live.
-  const value = await getSetting<Record<string, unknown>>('download_quotas', DEFAULT_DOWNLOAD_QUOTAS);
+  const value = await getSetting<DownloadQuotaSettings>('download_quotas', DEFAULT_DOWNLOAD_QUOTAS);
   if (!value || typeof value !== 'object') return { ...DEFAULT_DOWNLOAD_QUOTAS };
   const free = Number(value.free);
   const semiPremium = Number(value.semi_premium);
