@@ -6,6 +6,8 @@ import { indexerWorker } from './src/workers/indexer.ts';
 import { startBotPolling, startBotWebhook, stopBotRuntime } from './src/bot/index.ts';
 
 async function startServer() {
+  // Prepare a fresh Supabase PostgreSQL database before any bot or API code runs.
+  await runDatabaseMigrations();
   const app = createApp();
   const port = config.port || 3000;
   const isProd = process.env.NODE_ENV === 'production';
