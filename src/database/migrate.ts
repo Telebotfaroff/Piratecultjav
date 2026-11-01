@@ -47,7 +47,7 @@ export async function runDatabaseMigrations(): Promise<void> {
     `);
 
     const files = (await readdir(migrationsDirectory))
-      .filter((filename) => /^\\d+_[a-z0-9_]+\\.sql$/.test(filename))
+      .filter((filename) => /^\d+_[a-z0-9_]+\.sql$/.test(filename))
       .sort();
 
     if (files.length === 0) {
