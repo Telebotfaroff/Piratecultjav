@@ -90,7 +90,6 @@ export class IndexerWorker {
         this.lastErrorAt = new Date().toISOString();
         logEvent('error', 'indexer.loop_error', {
           errorName: err instanceof Error ? err.name : 'UnknownError',
-          message: err instanceof Error ? err.message.slice(0, 300) : 'Unknown worker loop error',
         });
         if (this.isRunning) await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
       }
@@ -232,7 +231,6 @@ export class IndexerWorker {
           jobId: job.id,
           attempt: job.attempts,
           errorName: err instanceof Error ? err.name : 'UnknownError',
-          message: message.slice(0, 300),
         });
       }
     } finally {
