@@ -1,6 +1,6 @@
 # Database migration notes
 
-The repository currently contains 24 SQL migration files through version 027.
+The repository currently contains 26 SQL migration files through version 028.
 
 ## Important legacy naming issue
 
