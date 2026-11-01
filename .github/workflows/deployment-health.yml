@@ -1,0 +1,34 @@
+name: Deployment Health Check
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deployment-health-check
+  cancel-in-progress: true
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Check configured deployment
+        env:
+          SERVICE_BASE_URL: ${{ secrets.SERVICE_BASE_URL }}
+        run: |
+          if [ -z "$SERVICE_BASE_URL" ]; then
+            echo "::notice::Set the SERVICE_BASE_URL repository secret to enable scheduled checks."
+            exit 0
+          fi
+          node scripts/check-deployment-health.mjs
