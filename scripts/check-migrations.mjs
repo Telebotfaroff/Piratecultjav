@@ -58,10 +58,13 @@ for (const name of entries) {
 }
 
 for (const [version, names] of versions) {
-  if (names.length > 1 && !legacyDuplicateVersions.has(version)) {
-    errors.push(`Duplicate migration version ${version}: ${names.join(', ')}`);
-  } else if (names.length > 1) {
-    console.warn(`Legacy duplicate migration version ${version}: ${names.join(', ')}`);
+  if (names.length > 1) {
+    const expected = legacyDuplicateFiles[version] || [];
+    if (names.length !== expected.length || expected.some((name) => !names.includes(name))) {
+      errors.push(`Unexpected files reuse migration version ${version}: ${names.join(', ')}`);
+    } else {
+      console.warn(`Legacy duplicate migration version ${version}: ${names.join(', ')}`);
+    }
   }
 }
 
