@@ -246,7 +246,7 @@ bot.command('start', async (ctx) => {
       '💡 Try: <code>ADN-001</code> · <code>STAR-765</code>',
       '',
       '<i>Choose an option below.</i>',
-    ].join('\\n');
+    ].join('\n');
 
     const startKeyboard = Markup.inlineKeyboard([
       [Markup.button.callback('🔎 Search Catalog', 'menu:search')],
