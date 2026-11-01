@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { Express } from 'express';
 import { Telegraf, Markup } from 'telegraf';
 import { config, isAdmin } from '../config.ts';
-import { normalizeCode, extractCodes, cleanActressList, cleanTitle } from '../services/code.ts';
+import { normalizeCode, extractCodes, extractVideoIdFromStartPayload, cleanActressList, cleanTitle } from '../services/code.ts';
 import { searchVideos, getVideoById, getVideoByCode, upsertVideoFromProvider, countVideos, updateVideoMetadata, deleteVideo, updateVideoStatus } from '../services/videos.ts';
 import { createIndexJob, countJobs, getRecentJobs, retryJob } from '../services/indexJobs.ts';
 import { upsertUser, isUserBlocked, setUserBlocked, countUsers, getBroadcastRecipientPage, getUser, getUserDashboard, getReferralLeaderboard, redeemPromoCode, createPromoCode, listPremiumPayments, listPromoCodes, setPromoCodeActive, consumeVideoDownload, refundVideoDownload, getDownloadQuotaSettings, setDownloadQuotaSettings, registerReferral, completeReferral, setUserPlan } from '../services/users.ts';
@@ -234,8 +234,8 @@ bot.command('start', async (ctx) => {
     }
 
     if (payload) {
-      const isVideoDeepLink = /^v_\d+$/i.test(payload);
-      return deliverVideoToUser(bot, ctx, isVideoDeepLink ? payload.slice(2) : payload, isVideoDeepLink ? 'deep_link' : 'unknown');
+      const videoId = extractVideoIdFromStartPayload(payload);
+      return deliverVideoToUser(bot, ctx, videoId ?? payload, videoId ? 'deep_link' : 'unknown');
     }
 
     const welcome = [
