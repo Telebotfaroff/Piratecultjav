@@ -246,6 +246,7 @@ export async function renewJobLease(jobId: number, workerId: string, leaseSecond
     .eq('id', jobId)
     .eq('status', 'processing')
     .eq('worker_id', workerId)
+    .gt('lease_expires_at', new Date().toISOString())
     .select('id')
     .maybeSingle();
   if (error) throw new Error(`Failed renewing lease for job ${jobId}: ${error.message}`);
