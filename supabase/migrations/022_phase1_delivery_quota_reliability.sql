@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS video_download_reservations (
   telegram_user_id BIGINT NOT NULL REFERENCES users(telegram_user_id) ON DELETE CASCADE,
   status TEXT NOT NULL CHECK (status IN ('reserved', 'delivered', 'refunded')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  quota_charged BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 CREATE INDEX IF NOT EXISTS idx_video_download_reservations_user_created
@@ -71,8 +72,13 @@ BEGIN
     RETURN;
   END IF;
 
-  INSERT INTO video_download_reservations(reservation_id, telegram_user_id, status)
-  VALUES (p_reservation_id, p_user_id, 'reserved');
+  INSERT INTO video_download_reservations(reservation_id, telegram_user_id, status, quota_charged)
+  VALUES (
+    p_reservation_id,
+    p_user_id,
+    'reserved',
+    result.plan <> 'premium' AND NOT (result.unlimited_until IS NOT NULL AND result.unlimited_until > NOW())
+  );
 
   RETURN QUERY SELECT TRUE, result.remaining, result.plan, result.unlimited_until;
 END;
@@ -112,7 +118,11 @@ BEGIN
   UPDATE users
   SET daily_download_count=GREATEST(daily_download_count - 1, 0), updated_at=NOW()
   WHERE telegram_user_id=p_user_id
-    AND daily_download_date=CURRENT_DATE;
+    AND daily_download_date=CURRENT_DATE
+    AND EXISTS (
+      SELECT 1 FROM video_download_reservations
+      WHERE reservation_id=p_reservation_id AND quota_charged=TRUE
+    );
 
   RETURN TRUE;
 END;
