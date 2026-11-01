@@ -25,7 +25,7 @@ export function classifyTelegramError(error: unknown): TelegramErrorInfo {
     return { kind: 'rate_limit', message: description, retryAfterSeconds: Number.isFinite(retryAfter) ? retryAfter : 1, errorCode };
   }
 
-  if (errorCode === 403 || /bot was blocked|user is deactivated|chat not found/i.test(description)) {
+  if (errorCode === 403 || /bot was blocked|user is deactivated/i.test(description)) {
     return { kind: 'blocked', message: description, errorCode };
   }
 
