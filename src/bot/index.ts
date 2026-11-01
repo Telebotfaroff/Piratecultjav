@@ -35,6 +35,7 @@ let runtimeHealthFailures = 0;
 let runtimeHealthCheckInProgress = false;
 let pendingNotFoundWatcher: ReturnType<typeof setInterval> | null = null;
 let pendingNotFoundCheckBusy = false;
+let activeBotBroadcast: { adminId: number; cancelled: boolean } | null = null;
 setActiveBotRole(config.activeBot);
 
 const START_IMAGES_MANIFEST_URL = 'https://raw.githubusercontent.com/telebottg7-sudo/Cosplay.image/main/image/manifest.json';
@@ -1001,30 +1002,76 @@ bot.command('start', async (ctx) => {
   // 7. Admin broadcast command (web dashboard is the primary UI)
   bot.command('broadcast', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
-    const text = ctx.message.text.replace(/^\/broadcast\s*/i, '').trim();
-    if (!text) return ctx.reply('Usage: /broadcast <message>');
+    if (activeBotBroadcast) return ctx.reply('⚠️ A broadcast is already running. Use /cancelbroadcast to stop it.');
+    const message = ctx.message.text.replace(/^\/broadcast\s*/i, '').trim();
+    if (!message) return ctx.reply('Usage: /broadcast <message>');
+
+    const run = { adminId: ctx.from.id, cancelled: false };
+    activeBotBroadcast = run;
     let sent = 0;
     let failed = 0;
+    let total = 0;
     let cursor: number | null = null;
-    do {
-      const page: { userIds: number[]; nextCursor: number | null } = await getBroadcastRecipientPage(cursor, 200);
-      for (let i = 0; i < page.userIds.length; i += 20) {
-        await Promise.all(page.userIds.slice(i, i + 20).map(async (userId: number) => {
-          try {
-            await withTelegramRetry(() => bot.telegram.sendMessage(userId, text), { label: `broadcast:${userId}` });
-            sent++;
-          } catch (error) {
-            if (classifyTelegramError(error).kind === 'blocked') {
-              try { await setUserBlocked(userId, true); } catch { /* continue */ }
+    let status: Awaited<ReturnType<typeof ctx.reply>> | null = null;
+
+    try {
+      status = await ctx.reply('📣 Broadcast started.\n✅ Sent: 0\n❌ Failed: 0');
+      do {
+        const page: { userIds: number[]; nextCursor: number | null } = await getBroadcastRecipientPage(cursor, 200);
+        total += page.userIds.length;
+        for (let i = 0; i < page.userIds.length && !run.cancelled; i += 20) {
+          const batch = page.userIds.slice(i, i + 20);
+          await Promise.all(batch.map(async (userId: number) => {
+            try {
+              await withTelegramRetry(() => bot.telegram.sendMessage(userId, message), { label: `broadcast:${userId}` });
+              sent++;
+            } catch (error) {
+              if (classifyTelegramError(error).kind === 'blocked') {
+                try { await setUserBlocked(userId, true); } catch { /* continue */ }
+              }
+              failed++;
             }
-            failed++;
+          }));
+
+          try {
+            await ctx.telegram.editMessageText(
+              status.chat.id,
+              status.message_id,
+              undefined,
+              `📣 <b>Broadcast in progress</b>\n\n👥 Scanned: ${total}\n✅ Sent: ${sent}\n❌ Failed: ${failed}`,
+              { parse_mode: 'HTML' },
+            );
+          } catch { /* progress updates are best-effort */ }
+
+          if (i + 20 < page.userIds.length && !run.cancelled) {
+            await new Promise(resolve => setTimeout(resolve, 800));
           }
-        }));
-        if (i + 20 < page.userIds.length) await new Promise(resolve => setTimeout(resolve, 800));
+        }
+        cursor = page.nextCursor;
+      } while (cursor !== null && !run.cancelled);
+
+      const summary = `${run.cancelled ? '⏹ <b>Broadcast cancelled</b>' : '✅ <b>Broadcast finished</b>'}\n\n👥 Scanned: ${total}\n📨 Processed: ${sent + failed}\n✅ Sent: ${sent}\n❌ Failed: ${failed}`;
+      if (status) {
+        try {
+          await ctx.telegram.editMessageText(status.chat.id, status.message_id, undefined, summary, { parse_mode: 'HTML' });
+        } catch {
+          await ctx.reply(summary, { parse_mode: 'HTML' });
+        }
       }
-      cursor = page.nextCursor;
-    } while (cursor !== null);
-    return ctx.reply(`📣 Broadcast finished.\\n\\n✅ Sent: ${sent}\\n❌ Failed: ${failed}`);
+    } catch (error) {
+      console.error('[Broadcast] Failed:', error);
+      await ctx.reply('⚠️ Broadcast stopped: ' + escapeHtml(error instanceof Error ? error.message : String(error)));
+    } finally {
+      if (activeBotBroadcast === run) activeBotBroadcast = null;
+    }
+  });
+
+  bot.command('cancelbroadcast', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
+    if (!activeBotBroadcast) return ctx.reply('There is no active broadcast.');
+    if (activeBotBroadcast.adminId !== ctx.from?.id) return ctx.reply('Only the admin who started this broadcast can cancel it.');
+    activeBotBroadcast.cancelled = true;
+    return ctx.reply('⏹ Cancellation requested. The current batch will finish first.');
   });
 
   bot.command('jobs', async (ctx) => {
