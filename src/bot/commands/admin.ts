@@ -4,7 +4,7 @@ const {
   Markup, config, isAdmin, normalizeCode, extractCodes, cleanActressList, cleanTitle,
   searchVideos, getVideoById, getVideoByCode, upsertVideoFromProvider, countVideos, updateVideoMetadata, deleteVideo, updateVideoStatus,
   createIndexJob, countJobs, getRecentJobs, retryJob,
-  upsertUser, isUserBlocked, setUserBlocked, countUsers, getBroadcastUserIds, getUser, getUserDashboard, getReferralLeaderboard,
+  upsertUser, isUserBlocked, setUserBlocked, countUsers, getBroadcastRecipientPage, getUser, getUserDashboard, getReferralLeaderboard,
   redeemPromoCode, createPromoCode, listPremiumPayments, listPromoCodes, setPromoCodeActive, completeStarPremiumPayment,
   consumeVideoDownload, refundVideoDownload, getDownloadQuotaSettings, setDownloadQuotaSettings, registerReferral, completeReferral, setUserPlan,
   checkUserForceSub, getAllForceSubChannels, upsertForceSubChannel, updateForceSubChannel, deleteForceSubChannel, createForceSubInviteLink,
@@ -13,6 +13,8 @@ const {
   deliverVideoToUser, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery,
   showForceSubAdminMenu, showAdminSettings, formatTimer, parsePremiumPayload, sendPremiumStore, sendPremiumInvoice,
 } = botDeps;
+
+let activeBroadcast: { adminId: number; cancelled: boolean } | null = null;
 
 export function registerAdminCommands(bot: Telegraf) {
   bot.command('cancel', async (ctx) => {
@@ -292,28 +294,92 @@ export function registerAdminCommands(bot: Telegraf) {
 
   bot.command('broadcast', async (ctx) => {
       if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
-      const text = ctx.message.text.replace(/^\/broadcast\s*/i, '').trim();
-      if (!text) return ctx.reply('Usage: /broadcast <message>');
-      const userIds = await getBroadcastUserIds();
+      if (activeBroadcast) return ctx.reply('⚠️ A broadcast is already running. Use /cancelbroadcast to stop it.');
+
+      const messageText = ctx.message.text.replace(/^\/broadcast\s*/i, '').trim();
+      if (!messageText) return ctx.reply('Usage: /broadcast <message>');
+
+      const run = { adminId: ctx.from.id, cancelled: false };
+      activeBroadcast = run;
       let sent = 0;
       let failed = 0;
-      for (let i = 0; i < userIds.length; i += 25) {
-        const batch = userIds.slice(i, i + 25);
-        await Promise.all(batch.map(async (userId) => {
-          try {
-            await withTelegramRetry(() => bot.telegram.sendMessage(userId, text), { label: `broadcast:${userId}` });
-            sent++;
-          } catch (error) {
-            const info = classifyTelegramError(error);
-            if (info.kind === 'blocked') {
-              try { await setUserBlocked(userId, true); } catch { /* keep broadcast running */ }
+      let scanned = 0;
+      let cursor: number | null = null;
+      let statusMessage: Awaited<ReturnType<typeof ctx.reply>> | null = null;
+
+      try {
+        statusMessage = await ctx.reply('📣 Broadcast started.\n✅ Sent: 0\n❌ Failed: 0\n👥 Processed: 0');
+        let hasMore = true;
+
+        while (hasMore && !run.cancelled) {
+          const page = await getBroadcastRecipientPage(cursor, 200);
+          if (!page.userIds.length) break;
+          scanned += page.userIds.length;
+
+          for (let offset = 0; offset < page.userIds.length && !run.cancelled; offset += 20) {
+            const batch = page.userIds.slice(offset, offset + 20);
+            await Promise.all(batch.map(async userId => {
+              try {
+                await withTelegramRetry(
+                  () => bot.telegram.sendMessage(userId, messageText),
+                  { label: `broadcast:${userId}` },
+                );
+                sent++;
+              } catch (error) {
+                const info = classifyTelegramError(error);
+                if (info.kind === 'blocked') {
+                  try { await setUserBlocked(userId, true); } catch { /* continue broadcast */ }
+                }
+                failed++;
+              }
+            }));
+
+            if ((sent + failed) % 100 < 20 || run.cancelled) {
+              try {
+                await ctx.telegram.editMessageText(
+                  statusMessage.chat.id,
+                  statusMessage.message_id,
+                  undefined,
+                  `📣 <b>Broadcast in progress</b>\n\n✅ Sent: ${sent}\n❌ Failed: ${failed}\n👥 Processed: ${sent + failed}\n⏳ Recipients scanned: ${scanned}`,
+                  { parse_mode: 'HTML' },
+                );
+              } catch { /* status edits are best-effort */ }
             }
-            failed++;
+
+            // Keep the send rate below Telegram's usual broadcast limits.
+            if (offset + 20 < page.userIds.length && !run.cancelled) {
+              await new Promise(resolve => setTimeout(resolve, 800));
+            }
           }
-        }));
-        await new Promise(resolve => setTimeout(resolve, 1100));
+
+          cursor = page.nextCursor;
+          hasMore = cursor !== null;
+        }
+
+        const outcome = run.cancelled ? '⏹ <b>Broadcast cancelled</b>' : '✅ <b>Broadcast finished</b>';
+        const summary = `${outcome}\n\n✅ Sent: ${sent}\n❌ Failed: ${failed}\n👥 Processed: ${sent + failed}`;
+        if (statusMessage) {
+          try {
+            await ctx.telegram.editMessageText(statusMessage.chat.id, statusMessage.message_id, undefined, summary, { parse_mode: 'HTML' });
+          } catch {
+            await ctx.reply(summary, { parse_mode: 'HTML' });
+          }
+        }
+      } catch (error) {
+        console.error('[Broadcast] Failed:', error);
+        const message = error instanceof Error ? error.message : String(error);
+        await ctx.reply('⚠️ Broadcast stopped: ' + escapeHtml(message));
+      } finally {
+        if (activeBroadcast === run) activeBroadcast = null;
       }
-      return ctx.reply(`📣 Broadcast finished.\n\n✅ Sent: ${sent}\n❌ Failed: ${failed}`);
+    });
+
+  bot.command('cancelbroadcast', async (ctx) => {
+      if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
+      if (!activeBroadcast) return ctx.reply('There is no active broadcast.');
+      if (activeBroadcast.adminId !== ctx.from?.id) return ctx.reply('Only the admin who started this broadcast can cancel it.');
+      activeBroadcast.cancelled = true;
+      return ctx.reply('⏹ Cancellation requested. Current batch will finish first.');
     });
 
   bot.command('jobs', async (ctx) => {
