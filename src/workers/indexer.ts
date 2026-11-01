@@ -142,7 +142,7 @@ export class IndexerWorker {
         const renewed = await renewJobLease(job!.id, workerId, this.leaseSeconds);
         if (!renewed) {
           leaseLost = true;
-          console.warn(`[IndexerWorker] Lease lost for job #${job!.id}; this worker will not finalize it.`);
+          logEvent('warn', 'indexer.lease_lost', { jobId: job!.id });
         }
       } catch (err) {
         leaseLost = true;
@@ -201,6 +201,7 @@ export class IndexerWorker {
         } catch (persistErr) {
           console.warn(`[IndexerWorker] Could not persist not-found status for #${job.id}:`, persistErr);
         }
+        logEvent('warn', 'indexer.provider_not_found', { jobId: job.id, code: job.code });
         return true;
       }
 
