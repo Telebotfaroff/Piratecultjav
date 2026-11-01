@@ -168,53 +168,24 @@ export interface ReferralLeaderboardEntry {
 }
 
 export async function getReferralLeaderboard(limit = 10): Promise<ReferralLeaderboardEntry[]> {
-  const supabase = getSupabase();
-  const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 25);
-
-  const { data, error } = await supabase
-    .from('users')
-    .select('telegram_user_id,username,first_name,last_name,referred_by,referral_completed,is_blocked');
+  const safeLimit = Math.min(Math.max(Number.isFinite(limit) ? Math.floor(limit) : 10, 1), 25);
+  const { data, error } = await getSupabase().rpc('get_referral_leaderboard', {
+    p_limit: safeLimit,
+  });
 
   if (error) {
     throw new Error(`Failed loading referral leaderboard: ${error.message}`);
   }
 
-  const rows = data || [];
-  const stats = new Map<number, { total: number; completed: number }>();
-
-  for (const row of rows) {
-    if (!row.referred_by) continue;
-    const referrerId = Number(row.referred_by);
-    if (!Number.isFinite(referrerId)) continue;
-    const current = stats.get(referrerId) || { total: 0, completed: 0 };
-    current.total += 1;
-    if (row.referral_completed) current.completed += 1;
-    stats.set(referrerId, current);
-  }
-
-  const usersById = new Map<number, any>();
-  for (const row of rows) {
-    const id = Number(row.telegram_user_id);
-    if (Number.isFinite(id)) usersById.set(id, row);
-  }
-
-  return Array.from(stats.entries())
-    .filter(([id]) => !usersById.get(id)?.is_blocked)
-    .map(([id, statsValue]) => {
-      const user = usersById.get(id);
-      const name = user?.first_name || user?.username || `User ${id}`;
-      return {
-        telegram_user_id: id,
-        display_name: String(name).slice(0, 40),
-        completed_referrals: statsValue.completed,
-        total_referrals: statsValue.total,
-      };
-    })
-    .sort((a, b) =>
-      b.completed_referrals - a.completed_referrals ||
-      b.total_referrals - a.total_referrals
-    )
-    .slice(0, safeLimit);
+  if (!Array.isArray(data)) return [];
+  return data.filter((row): row is Record<string, unknown> =>
+    Boolean(row && typeof row === 'object')
+  ).map(row => ({
+    telegram_user_id: Number(row.telegram_user_id),
+    display_name: String(row.display_name || 'User').slice(0, 40),
+    completed_referrals: Number(row.completed_referrals || 0),
+    total_referrals: Number(row.total_referrals || 0),
+  })).filter(row => Number.isFinite(row.telegram_user_id));
 }
 
 export interface PremiumPaymentResult {
