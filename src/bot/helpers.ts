@@ -546,7 +546,7 @@ async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: strin
           ),
         ]);
         return ctx.reply(
-          '🔒 <b>Join the required channel(s) first</b>\\n\\nThen run the search again and tap Download All.',
+          '🔒 <b>Join the required channel(s) first</b>\n\nThen run the search again and tap Download All.',
           { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) },
         );
       }
@@ -633,7 +633,7 @@ async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: strin
         : processed < total
           ? 'ℹ️ Processing stopped before all matches were attempted. Please try again if needed.'
           : '🎉 All matching results were processed.',
-    ].join('\\n');
+    ].join('\n');
     return ctx.reply(summary, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
