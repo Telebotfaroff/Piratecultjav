@@ -14,7 +14,7 @@
     "test:watch": "node --import tsx --test --watch tests/*.test.ts",
     "check:migrations": "node scripts/check-migrations.mjs",
     "health:check": "node scripts/check-deployment-health.mjs",
-    "db:migrate": "node --import tsx src/database/migrate.ts"
+    "db:migrate": "node --import tsx scripts/run-migrations.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
