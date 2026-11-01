@@ -312,7 +312,7 @@ export function registerAdminCommands(bot: Telegraf) {
         let hasMore = true;
 
         while (hasMore && !run.cancelled) {
-          const page = await getBroadcastRecipientPage(cursor, 200);
+          const page: { userIds: number[]; nextCursor: number | null } = await getBroadcastRecipientPage(cursor, 200);
           if (!page.userIds.length) break;
           scanned += page.userIds.length;
 
