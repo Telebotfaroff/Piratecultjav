@@ -24,20 +24,60 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_videos_normalized_code
 -- 2026-10 search improvements
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
+-- concat_ws(text, VARIADIC "any") is not IMMUTABLE in PostgreSQL,
+-- so it cannot be used in a STORED generated column. Keep search_text as a
+-- regular column and maintain it with a trigger instead.
 ALTER TABLE videos
-  ADD COLUMN IF NOT EXISTS search_text TEXT
-  GENERATED ALWAYS AS (
-    lower(
-      concat_ws(
-        ' ',
-        coalesce(code, ''),
-        coalesce(title, ''),
-        coalesce(description, ''),
-        coalesce(provider, ''),
-        coalesce(metadata::text, '')
-      )
+  ADD COLUMN IF NOT EXISTS search_text TEXT;
+
+CREATE OR REPLACE FUNCTION public.refresh_video_search_text()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $
+BEGIN
+  NEW.search_text := lower(
+    concat_ws(
+      ' ',
+      coalesce(NEW.code, ''),
+      coalesce(NEW.title, ''),
+      coalesce(NEW.description, ''),
+      coalesce(NEW.provider, ''),
+      coalesce(NEW.metadata::text, '')
     )
-  ) STORED;
+  );
+  RETURN NEW;
+END;
+$;
+
+DROP TRIGGER IF EXISTS trg_refresh_video_search_text ON videos;
+CREATE TRIGGER trg_refresh_video_search_text
+  BEFORE INSERT OR UPDATE OF code, title, description, provider, metadata
+  ON videos
+  FOR EACH ROW
+  EXECUTE FUNCTION public.refresh_video_search_text();
+
+-- Populate existing rows before creating the trigram index.
+UPDATE videos
+SET search_text = lower(
+  concat_ws(
+    ' ',
+    coalesce(code, ''),
+    coalesce(title, ''),
+    coalesce(description, ''),
+    coalesce(provider, ''),
+    coalesce(metadata::text, '')
+  )
+)
+WHERE search_text IS DISTINCT FROM lower(
+  concat_ws(
+    ' ',
+    coalesce(code, ''),
+    coalesce(title, ''),
+    coalesce(description, ''),
+    coalesce(provider, ''),
+    coalesce(metadata::text, '')
+  )
+);
 
 CREATE INDEX IF NOT EXISTS idx_videos_search_text_trgm
   ON videos USING gin (search_text gin_trgm_ops);
