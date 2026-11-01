@@ -199,17 +199,28 @@ export async function retryJob(jobId: number): Promise<IndexJob> {
   return data as IndexJob;
 }
 
-export async function getRecentJobs(statusFilter?: string, limit = 50): Promise<IndexJob[]> {
+export async function getRecentJobs(
+  statusFilter?: string,
+  limit = 50,
+  beforeId?: number,
+): Promise<IndexJob[]> {
   const supabase = getSupabase();
+  const safeLimit = Math.min(Math.max(Number.isFinite(limit) ? Math.floor(limit) : 50, 1), 100);
 
   let query = supabase.from('index_jobs').select('*');
   if (statusFilter && statusFilter !== 'all') {
+    if (!['queued', 'processing', 'completed', 'failed'].includes(statusFilter)) {
+      throw new Error('Invalid index job status filter.');
+    }
     query = query.eq('status', statusFilter);
+  }
+  if (beforeId !== undefined && Number.isSafeInteger(beforeId) && beforeId > 0) {
+    query = query.lt('id', beforeId);
   }
 
   const { data, error } = await query
     .order('id', { ascending: false })
-    .limit(limit);
+    .limit(safeLimit);
 
   if (error) {
     throw new Error(`Failed fetching index jobs: ${error.message}`);
