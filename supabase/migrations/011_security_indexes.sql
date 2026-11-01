@@ -33,7 +33,7 @@ ALTER TABLE videos
 CREATE OR REPLACE FUNCTION public.refresh_video_search_text()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-AS $
+AS $function$
 BEGIN
   NEW.search_text := lower(
     concat_ws(
@@ -47,7 +47,7 @@ BEGIN
   );
   RETURN NEW;
 END;
-$;
+$function$;
 
 DROP TRIGGER IF EXISTS trg_refresh_video_search_text ON videos;
 CREATE TRIGGER trg_refresh_video_search_text
