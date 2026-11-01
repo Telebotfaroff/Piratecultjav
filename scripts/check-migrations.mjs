@@ -32,6 +32,21 @@ for (const [version, names] of versions) {
   }
 }
 
+const accessMigrationPath = join(directory.pathname, '027_service_role_data_api_grants.sql');
+try {
+  const accessMigration = await readFile(accessMigrationPath, 'utf8');
+  for (const [label, pattern] of [
+    ['service_role table grants', /GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO service_role/i],
+    ['service_role sequence grants', /GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO service_role/i],
+    ['RLS enablement', /ENABLE ROW LEVEL SECURITY/i],
+    ['default table grants', /ALTER DEFAULT PRIVILEGES[\\s\\S]*?GRANT ALL PRIVILEGES ON TABLES TO service_role/i],
+  ]) {
+    if (!pattern.test(accessMigration)) errors.push(`Migration 027 is missing ${label}.`);
+  }
+} catch {
+  errors.push('Required migration 027_service_role_data_api_grants.sql is missing.');
+}
+
 const highestVersion = Math.max(...Array.from(versions.keys(), Number));
 if (!Number.isFinite(highestVersion) || highestVersion < 27) {
   errors.push('Expected the repository migration baseline through version 027.');
