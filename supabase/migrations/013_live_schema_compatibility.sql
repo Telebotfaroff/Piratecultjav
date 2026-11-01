@@ -27,10 +27,31 @@ ALTER TABLE force_sub_channels
   ADD COLUMN IF NOT EXISTS request_mode BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
-UPDATE force_sub_channels
-SET channel_id=COALESCE(channel_id,chat_id::TEXT),
-    is_active=COALESCE(is_active,is_enabled,TRUE)
-WHERE channel_id IS NULL OR is_active IS NULL;
+-- Older live schemas may have used is_enabled instead of is_active.
+-- Do not reference that legacy column unless it actually exists.
+DO $compat$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'force_sub_channels'
+      AND column_name = 'is_enabled'
+  ) THEN
+    EXECUTE $sql$
+      UPDATE force_sub_channels
+      SET channel_id = COALESCE(channel_id, chat_id::TEXT),
+          is_active = COALESCE(is_active, is_enabled, TRUE)
+      WHERE channel_id IS NULL OR is_active IS NULL
+    $sql$;
+  ELSE
+    UPDATE force_sub_channels
+    SET channel_id = COALESCE(channel_id, chat_id::TEXT),
+        is_active = COALESCE(is_active, TRUE)
+    WHERE channel_id IS NULL OR is_active IS NULL;
+  END IF;
+END;
+$compat$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS force_sub_channels_channel_id_key ON force_sub_channels(channel_id);
 
@@ -43,8 +64,10 @@ BEGIN
   RETURN NEW;
 END $$;
 
+DROP TRIGGER IF EXISTS trg_refresh_video_search_text ON videos;
 DROP TRIGGER IF EXISTS trg_videos_search_text ON videos;
-CREATE TRIGGER trg_videos_search_text BEFORE INSERT OR UPDATE OF code,title,description,provider,metadata ON videos
+CREATE TRIGGER trg_refresh_video_search_text
+BEFORE INSERT OR UPDATE OF code,title,description,provider,metadata ON videos
 FOR EACH ROW EXECUTE FUNCTION refresh_video_search_text();
 
 UPDATE videos SET search_text=lower(concat_ws(' ',coalesce(code,''),coalesce(title,''),coalesce(description,''),coalesce(provider,''),coalesce(metadata::text,'')));
