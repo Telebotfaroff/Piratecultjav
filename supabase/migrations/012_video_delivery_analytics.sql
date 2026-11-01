@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS video_delivery_events (
     )
   ),
   telegram_user_id BIGINT REFERENCES users(telegram_user_id) ON DELETE SET NULL,
-  video_id BIGINT REFERENCES videos(id) ON DELETE SET NULL,
+  video_id UUID REFERENCES videos(id) ON DELETE SET NULL,
   code TEXT,
   source TEXT NOT NULL DEFAULT 'unknown' CHECK (
     source IN ('deep_link', 'search', 'callback', 'unknown')
