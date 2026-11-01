@@ -12,6 +12,8 @@ export interface IndexJob {
   created_at?: string;
   updated_at?: string;
   next_attempt_at?: string | null;
+  worker_id?: string | null;
+  lease_expires_at?: string | null;
 }
 
 export interface CreateJobParams {
@@ -138,120 +140,62 @@ export async function createIndexJob(params: CreateJobParams): Promise<CreateJob
  * If RPC 'claim_next_index_job' is available, invokes it.
  * Otherwise uses safe single-step fallback with adaptive column support.
  */
-export async function claimNextJob(): Promise<IndexJob | null> {
+export async function claimNextJob(workerId: string, leaseSeconds = 180): Promise<IndexJob | null> {
   const supabase = getSupabase();
-
-  try {
-    // Attempt stored procedure first (safest for concurrent instances)
-    const { data: rpcData, error: rpcError } = await supabase.rpc('claim_next_index_job');
-    if (!rpcError && rpcData && rpcData.length > 0) {
-      return rpcData[0] as IndexJob;
-    }
-  } catch {
-    // Fall back to client-side atomic step if RPC not yet run in SQL editor
-  }
-
-  const hasNextAttempt = await checkHasNextAttemptAt();
-
-  // Fallback: Find oldest queued job
-  let fetchQuery = supabase
-    .from('index_jobs')
-    .select('*')
-    .eq('status', 'queued');
-
-  if (hasNextAttempt) {
-    fetchQuery = fetchQuery.or(`next_attempt_at.is.null,next_attempt_at.lte.${new Date().toISOString()}`);
-  }
-
-  const { data: queued, error: fetchError } = await fetchQuery
-    .order('id', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (fetchError || !queued) {
-    return null;
-  }
-
-  const updatePayload: Record<string, unknown> = {
-    status: 'processing',
-    attempts: (queued.attempts || 0) + 1,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (hasNextAttempt) {
-    updatePayload.next_attempt_at = null;
-  }
-
-  // Atomically transition status from queued -> processing
-  const { data: claimed, error: updateError } = await supabase
-    .from('index_jobs')
-    .update(updatePayload)
-    .eq('id', queued.id)
-    .eq('status', 'queued') // Optimistic locking guard
-    .select()
-    .maybeSingle();
-
-  if (updateError || !claimed) {
-    return null; // Another worker won the race
-  }
-
-  return claimed as IndexJob;
+  const { data, error } = await supabase.rpc('claim_next_index_job', {
+    p_worker_id: workerId,
+    p_lease_seconds: leaseSeconds,
+  });
+  if (error) throw new Error(`Failed claiming index job: ${error.message}`);
+  return Array.isArray(data) && data.length ? data[0] as IndexJob : null;
 }
 
 export async function updateJobStatus(
   jobId: number,
   status: 'queued' | 'processing' | 'completed' | 'failed',
   errorMessage: string | null = null,
-  nextAttemptAt: string | null = null
-): Promise<void> {
+  nextAttemptAt: string | null = null,
+  workerId?: string
+): Promise<boolean> {
   const supabase = getSupabase();
   const hasNextAttempt = await checkHasNextAttemptAt();
-
   const updatePayload: Record<string, unknown> = {
     status,
     error: errorMessage,
     updated_at: new Date().toISOString(),
   };
-
-  if (hasNextAttempt) {
-    updatePayload.next_attempt_at = nextAttemptAt;
+  if (hasNextAttempt) updatePayload.next_attempt_at = nextAttemptAt;
+  if (status !== 'processing') {
+    updatePayload.worker_id = null;
+    updatePayload.lease_expires_at = null;
   }
-
-  const { error } = await supabase
-    .from('index_jobs')
-    .update(updatePayload)
-    .eq('id', jobId);
-
-  if (error) {
-    throw new Error(`Failed updating job ${jobId} status: ${error.message}`);
-  }
+  let query = supabase.from('index_jobs').update(updatePayload).eq('id', jobId);
+  if (workerId) query = query.eq('worker_id', workerId).eq('status', 'processing');
+  const { data, error } = await query.select('id').maybeSingle();
+  if (error) throw new Error(`Failed updating job ${jobId} status: ${error.message}`);
+  return Boolean(data);
 }
 
 export async function retryJob(jobId: number): Promise<IndexJob> {
   const supabase = getSupabase();
   const hasNextAttempt = await checkHasNextAttemptAt();
-
   const updatePayload: Record<string, unknown> = {
     status: 'queued',
     error: null,
+    attempts: 0,
     updated_at: new Date().toISOString(),
+    worker_id: null,
+    lease_expires_at: null,
   };
-
-  if (hasNextAttempt) {
-    updatePayload.next_attempt_at = null;
-  }
-
+  if (hasNextAttempt) updatePayload.next_attempt_at = null;
   const { data, error } = await supabase
     .from('index_jobs')
     .update(updatePayload)
     .eq('id', jobId)
+    .in('status', ['failed', 'queued'])
     .select()
     .single();
-
-  if (error) {
-    throw new Error(`Failed resetting job for retry: ${error.message}`);
-  }
-
+  if (error) throw new Error(`Failed resetting job for retry: ${error.message}`);
   return data as IndexJob;
 }
 
@@ -293,31 +237,38 @@ export async function countJobs(): Promise<{ queued: number; processing: number;
 }
 
 /** Requeues jobs left in processing after a server crash or hard restart. */
-export async function recoverStaleJobs(staleAfterMs = 15 * 60 * 1000): Promise<number> {
+export async function renewJobLease(jobId: number, workerId: string, leaseSeconds = 180): Promise<boolean> {
   const supabase = getSupabase();
-  const cutoff = new Date(Date.now() - staleAfterMs).toISOString();
-  const hasNextAttempt = await checkHasNextAttemptAt();
-
-  const updatePayload: Record<string, unknown> = {
-    status: 'queued',
-    error: 'Recovered stale processing job after worker restart/timeout',
-    updated_at: new Date().toISOString(),
-  };
-
-  if (hasNextAttempt) {
-    updatePayload.next_attempt_at = new Date().toISOString();
-  }
-
+  const expiresAt = new Date(Date.now() + leaseSeconds * 1000).toISOString();
   const { data, error } = await supabase
     .from('index_jobs')
-    .update(updatePayload)
+    .update({ lease_expires_at: expiresAt, updated_at: new Date().toISOString() })
+    .eq('id', jobId)
     .eq('status', 'processing')
-    .lt('updated_at', cutoff)
+    .eq('worker_id', workerId)
+    .select('id')
+    .maybeSingle();
+  if (error) throw new Error(`Failed renewing lease for job ${jobId}: ${error.message}`);
+  return Boolean(data);
+}
+
+/** Requeues only expired leases; active jobs keep their lease while heartbeats continue. */
+export async function recoverStaleJobs(): Promise<number> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('index_jobs')
+    .update({
+      status: 'queued',
+      worker_id: null,
+      lease_expires_at: null,
+      error: 'Recovered expired worker lease',
+      updated_at: new Date().toISOString(),
+      next_attempt_at: new Date().toISOString(),
+    })
+    .eq('status', 'processing')
+    .not('lease_expires_at', 'is', null)
+    .lt('lease_expires_at', new Date().toISOString())
     .select('id');
-
-  if (error) {
-    throw new Error(`Failed recovering stale jobs: ${error.message}`);
-  }
-
+  if (error) throw new Error(`Failed recovering expired jobs: ${error.message}`);
   return data?.length || 0;
 }
