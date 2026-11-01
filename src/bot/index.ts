@@ -3191,13 +3191,6 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
   };
 
   let bot = await validateAndBuild(role);
-  if (!bot) {
-    const fallback = role === 'primary' ? 'backup' : 'primary';
-    if (!tokenForRole(fallback)) return false;
-    console.warn(`[TelegramBot] Falling back from ${role} to ${fallback} bot for webhook mode.`);
-    role = fallback;
-    bot = await validateAndBuild(role);
-  }
   if (!bot && !runtimeFailoverAttempted) {
     const fallback = role === 'primary' ? 'backup' : 'primary';
     if (!tokenForRole(fallback)) return false;
