@@ -447,21 +447,32 @@ export async function getUserDashboard(telegramUserId: number): Promise<UserDash
   };
 }
 
-export async function consumeVideoDownload(telegramUserId: number): Promise<DownloadAllowance> {
+export async function trackTelegramUser(user: {
+  id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+}): Promise<{ is_new: boolean; is_blocked: boolean }> {
   const supabase = getSupabase();
-  const { data, error } = await supabase.rpc('consume_video_download', { p_user_id: telegramUserId });
-  if (error) {
-    if (error.message.includes('Could not find the function') || error.code === 'PGRST202' || error.message.includes('schema cache')) {
-      // Graceful fallback if migration 005 has not been executed on Supabase yet
-      return {
-        allowed: true,
-        remaining: 20,
-        plan: 'free',
-        unlimited_until: null,
-      };
-    }
-    throw new Error(`Failed checking download allowance: ${error.message}`);
-  }
+  const { data, error } = await supabase.rpc('track_telegram_user', {
+    p_telegram_user_id: user.id,
+    p_username: user.username || null,
+    p_first_name: user.first_name || null,
+    p_last_name: user.last_name || null,
+  });
+  if (error) throw new Error(`Failed tracking Telegram user: ${error.message}`);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error('User tracking returned no result.');
+  return { is_new: Boolean(row.is_new), is_blocked: Boolean(row.is_blocked) };
+}
+
+export async function consumeVideoDownload(telegramUserId: number, reservationId: string): Promise<DownloadAllowance> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.rpc('consume_video_download_with_reservation', {
+    p_user_id: telegramUserId,
+    p_reservation_id: reservationId,
+  });
+  if (error) throw new Error(`Failed checking download allowance: ${error.message}`);
   const row = Array.isArray(data) ? data[0] : data;
   return {
     allowed: Boolean(row?.allowed),
@@ -471,15 +482,20 @@ export async function consumeVideoDownload(telegramUserId: number): Promise<Down
   };
 }
 
-export async function refundVideoDownload(telegramUserId: number): Promise<boolean> {
+export async function markVideoDownloadDelivered(reservationId: string): Promise<boolean> {
   const supabase = getSupabase();
-  const { data, error } = await supabase.rpc('refund_video_download', { p_user_id: telegramUserId });
-  if (error) {
-    if (error.message.includes('Could not find the function') || error.code === 'PGRST202' || error.message.includes('schema cache')) {
-      return false;
-    }
-    throw new Error(`Failed refunding download allowance: ${error.message}`);
-  }
+  const { data, error } = await supabase.rpc('mark_video_download_delivered', { p_reservation_id: reservationId });
+  if (error) throw new Error(`Failed marking download delivered: ${error.message}`);
+  return Boolean(data);
+}
+
+export async function refundVideoDownload(telegramUserId: number, reservationId: string): Promise<boolean> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.rpc('refund_video_download', {
+    p_user_id: telegramUserId,
+    p_reservation_id: reservationId,
+  });
+  if (error) throw new Error(`Failed refunding download allowance: ${error.message}`);
   return Boolean(data);
 }
 
