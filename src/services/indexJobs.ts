@@ -143,8 +143,8 @@ export async function createIndexJob(params: CreateJobParams): Promise<CreateJob
 export async function claimNextJob(workerId: string, leaseSeconds = 180): Promise<IndexJob | null> {
   const supabase = getSupabase();
   const { data, error } = await supabase.rpc('claim_next_index_job', {
-    p_worker_id: workerId,
     p_lease_seconds: leaseSeconds,
+    p_worker_id: workerId,
   });
   if (error) throw new Error(`Failed claiming index job: ${error.message}`);
   return Array.isArray(data) && data.length ? data[0] as IndexJob : null;
