@@ -75,6 +75,6 @@ AS $
 BEGIN
   RETURN QUERY
   SELECT *
-    FROM public.claim_next_index_job('legacy:' || uuid_generate_v4()::TEXT, 900);
+    FROM public.claim_next_index_job('legacy:' || gen_random_uuid()::TEXT, 900);
 END;
 $;
