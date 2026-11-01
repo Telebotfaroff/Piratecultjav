@@ -163,53 +163,51 @@ function VideoDetails({
   const [selectedScreenshot, setSelectedScreenshot] = useState<ScreenshotRecord | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    if (!initialVideo) {
-      setLoading(true);
-    }
+    const controller = new AbortController();
+    if (!initialVideo) setLoading(true);
 
-    fetch('/api/videos/' + encodeURIComponent(id))
+    fetch('/api/videos/' + encodeURIComponent(id), { signal: controller.signal })
       .then(async response => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Unable to load video');
         return data;
       })
       .then(data => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setVideo(data.video || null);
         setBotUrl(data.botUrl || null);
       })
       .catch(err => {
-        if (!cancelled && !initialVideo) {
+        if (!controller.signal.aborted && !initialVideo) {
           setError(err instanceof Error ? err.message : 'Unable to load video');
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => controller.abort();
   }, [id, initialVideo]);
 
   useEffect(() => {
     if (!video?.code) return;
-    let cancelled = false;
+    const controller = new AbortController();
     setScreenshotsLoading(true);
-    fetch('/api/screenshots/' + encodeURIComponent(video.code))
+    fetch('/api/screenshots/' + encodeURIComponent(video.code), { signal: controller.signal })
       .then(async response => {
         if (!response.ok) throw new Error('Could not load screenshots');
         return response.json();
       })
       .then(data => {
-        if (!cancelled) setScreenshots(Array.isArray(data.images) ? data.images : []);
+        if (!controller.signal.aborted) setScreenshots(Array.isArray(data.images) ? data.images : []);
       })
       .catch(() => {
-        if (!cancelled) setScreenshots([]);
+        if (!controller.signal.aborted) setScreenshots([]);
       })
       .finally(() => {
-        if (!cancelled) setScreenshotsLoading(false);
+        if (!controller.signal.aborted) setScreenshotsLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => controller.abort();
   }, [video?.code]);
 
   if (loading) {
