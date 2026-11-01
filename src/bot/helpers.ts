@@ -157,9 +157,15 @@ async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, s
       `🎬 *${video.code}* - ${video.title}${deleteReminder}`
     );
 
+    // Telegram has accepted the copy: never refund this quota even if the
+    // follow-up bookkeeping RPC is temporarily unavailable.
+    quotaConsumed = false;
     if (quotaReservationId) {
-      await markVideoDownloadDelivered(quotaReservationId);
-      quotaConsumed = false;
+      try {
+        await markVideoDownloadDelivered(quotaReservationId);
+      } catch (reservationError) {
+        console.error('[Quota] Video was delivered but reservation confirmation failed:', reservationError);
+      }
     }
 
     await recordVideoDeliveryEvent({ eventType: 'delivered', telegramUserId: ctx.from?.id, videoId: video.id, code: video.code, source, success: true });
