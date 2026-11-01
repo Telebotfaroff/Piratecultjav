@@ -3257,6 +3257,7 @@ export function isBotRoleConfigured(role: 'primary' | 'backup'): boolean {
 export async function switchBotRole(role: 'primary' | 'backup'): Promise<boolean> {
   if (!tokenForRole(role)) return false;
   if (!runtimeFailoverInProgress) runtimeFailoverAttempted = false;
+  runtimeHealthFailures = 0;
   const previousBot = botInstance;
   if (isWebhookActive && previousBot) {
     await previousBot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => undefined);
@@ -3295,6 +3296,7 @@ export async function stopBotRuntime(): Promise<void> {
     });
   }
   isWebhookActive = false;
+  runtimeHealthFailures = 0;
   stopBotPolling();
   botInstance = null;
   isPollingActive = false;
