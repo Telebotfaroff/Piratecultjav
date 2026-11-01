@@ -95,5 +95,5 @@ if (errors.length) {
   process.exitCode = 1;
 } else {
   console.log(`Verified ${entries.length} SQL migration files (latest version: ${String(highestVersion).padStart(3, '0')}).`);
-  console.log('New migrations must use a unique numeric version greater than 027.');
+  console.log('New migrations must use a unique numeric version greater than 028.');
 }
