@@ -31,7 +31,7 @@ export function recordHttpRequest(method: string, route: string, statusCode: num
   const normalized = boundedRoute(method, route);
   const key = normalized.method + ' ' + normalized.route;
   let metric = routeMetrics.get(key);
-  if (!metric && routeMetrics.size >= MAX_ROUTE_METRICS) {
+  if (!metric && routeMetrics.size >= MAX_ROUTE_METRICS - 1) {
     metric = routeMetrics.get('OTHER /other');
     if (!metric) {
       metric = {
