@@ -39,7 +39,7 @@ try {
     ['service_role table grants', /GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO service_role/i],
     ['service_role sequence grants', /GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO service_role/i],
     ['RLS enablement', /ENABLE ROW LEVEL SECURITY/i],
-    ['default table grants', /ALTER DEFAULT PRIVILEGES[\\s\\S]*?GRANT ALL PRIVILEGES ON TABLES TO service_role/i],
+    ['default table grants', /ALTER DEFAULT PRIVILEGES[\s\S]*?GRANT ALL PRIVILEGES ON TABLES TO service_role/i],
   ]) {
     if (!pattern.test(accessMigration)) errors.push(`Migration 027 is missing ${label}.`);
   }
