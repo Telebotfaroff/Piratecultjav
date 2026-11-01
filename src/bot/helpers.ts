@@ -535,22 +535,7 @@ async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: strin
   if (!ctx.from || !query) return ctx.reply('⚠️ I could not identify the search query. Please search again.');
 
   try {
-    const videos: any[] = [];
-    let total = 0;
-    let offset = 0;
-    do {
-      const result = await searchVideos(query, 100, offset);
-      total = result.total;
-      videos.push(...result.videos);
-      offset += result.videos.length;
-      if (result.videos.length === 0) break;
-    } while (offset < total);
-
-    if (!videos.length) {
-      await notifyNotFound(ctx, query, 'download all search results');
-      return ctx.reply('❌ No available videos were found for <b>' + escapeHtml(query) + '</b>.', { parse_mode: 'HTML' });
-    }
-
+    // Check force-sub once for the batch; individual delivery still revalidates it.
     if (!isAdmin(ctx.from.id)) {
       const forceSub = await checkUserForceSub(bot, ctx.from.id);
       if (!forceSub.passed) {
@@ -561,36 +546,67 @@ async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: strin
           ),
         ]);
         return ctx.reply(
-          '🔒 <b>Join the required channel(s) first</b>\n\nThen run the search again and tap Download All.',
+          '🔒 <b>Join the required channel(s) first</b>\\n\\nThen run the search again and tap Download All.',
           { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) },
         );
       }
     }
 
+    // Read quota once instead of making three dashboard queries before every video.
+    // The atomic reservation inside deliverVideoToUser remains authoritative.
+    let localRemaining = Number.POSITIVE_INFINITY;
+    if (!isAdmin(ctx.from.id)) {
+      const dashboard = await getUserDashboard(ctx.from.id);
+      if (!dashboard) {
+        return ctx.reply('⚠️ Could not load your account allowance. Bulk delivery stopped.');
+      }
+      if (!dashboard.is_unlimited) {
+        localRemaining = Math.max(0, dashboard.daily_remaining);
+        if (localRemaining === 0) {
+          return ctx.reply('🚫 Your daily download allowance is used up. Upgrade your plan or try again tomorrow.');
+        }
+      }
+    }
+
+    const pageSize = 100;
+    let offset = 0;
+    let total = 0;
     let processed = 0;
-    let skippedForQuota = false;
-    for (let index = 0; index < videos.length; index++) {
-      if (!isAdmin(ctx.from.id)) {
-        const dashboard = await getUserDashboard(ctx.from.id);
-        if (!dashboard) {
-          await ctx.reply('⚠️ Could not load your account allowance. Bulk delivery stopped.');
+    let exhaustedQuota = false;
+    let hasResults = false;
+
+    // Stream one bounded page at a time. Only the first query needs an exact count.
+    while (true) {
+      const result = await searchVideos(query, pageSize, offset, offset === 0);
+      if (offset === 0) total = result.total;
+      if (!result.videos.length) break;
+      hasResults = true;
+
+      for (const video of result.videos) {
+        if (localRemaining <= 0) {
+          exhaustedQuota = true;
           break;
         }
-        if (!dashboard.is_unlimited && dashboard.daily_remaining <= 0) {
-          skippedForQuota = true;
-          break;
+
+        await deliverVideoToUser(bot, ctx, String(video.id), 'search', {
+          suppressDeleteReminderMessage: true,
+        });
+        processed++;
+        if (Number.isFinite(localRemaining)) localRemaining--;
+
+        // Avoid flooding the same Telegram chat; deliver one result at a time.
+        if (processed < total && localRemaining > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1100));
         }
       }
 
-      await deliverVideoToUser(bot, ctx, String(videos[index].id), 'search', {
-        suppressDeleteReminderMessage: true,
-      });
-      processed++;
+      if (exhaustedQuota || result.videos.length < pageSize) break;
+      offset += result.videos.length;
+    }
 
-      // Avoid flooding the same Telegram chat; deliver one result at a time.
-      if (index < videos.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1100));
-      }
+    if (!hasResults) {
+      await notifyNotFound(ctx, query, 'download all search results');
+      return ctx.reply('❌ No available videos were found for <b>' + escapeHtml(query) + '</b>.', { parse_mode: 'HTML' });
     }
 
     const summary = [
@@ -599,12 +615,12 @@ async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: strin
       '🔎 Search: <code>' + escapeHtml(query) + '</code>',
       '📚 Matching videos: <b>' + total + '</b>',
       '📤 Delivery attempts: <b>' + processed + '</b>',
-      skippedForQuota
+      exhaustedQuota || localRemaining <= 0
         ? '🚫 Stopped because your daily download allowance is used up. Upgrade your plan or try again tomorrow.'
         : processed < total
           ? 'ℹ️ Processing stopped before all matches were attempted. Please try again if needed.'
           : '🎉 All matching results were processed.',
-    ].filter(Boolean).join('\n');
+    ].join('\\n');
     return ctx.reply(summary, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
