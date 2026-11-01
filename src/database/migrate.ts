@@ -1,11 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const migrationsDirectory = path.resolve(__dirname, '../../supabase/migrations');
+const migrationsDirectory = path.resolve(process.cwd(), 'supabase/migrations');
 const advisoryLockKeys = [31415, 92653] as const;
 
 interface MigrationRecord {
