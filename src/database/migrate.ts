@@ -26,7 +26,9 @@ export async function runDatabaseMigrations(): Promise<void> {
     connectionString,
     // Supabase PostgreSQL requires TLS. The connection string remains a secret
     // and is never printed to logs.
-    ssl: { rejectUnauthorized: false },
+    ssl: process.env.DATABASE_SSL?.trim().toLowerCase() === 'false'
+      ? false
+      : { rejectUnauthorized: false },
     connectionTimeoutMillis: 15_000,
     keepAlive: true,
   });
