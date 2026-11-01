@@ -247,6 +247,9 @@ export function createApp(): express.Express {
   app.get('/api/jobs', adminOnly, async (req: Request, res: Response) => {
     try {
       const statusFilter = typeof req.query.status === 'string' ? req.query.status : undefined;
+      if (statusFilter && statusFilter !== 'all' && !['queued', 'processing', 'completed', 'failed'].includes(statusFilter)) {
+        return res.status(400).json({ ok: false, error: 'Invalid job status filter' });
+      }
       const parsedLimit = Number.parseInt(String(req.query.limit || '50'), 10);
       const limit = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 50, 1), 100);
       const parsedCursor = req.query.beforeId === undefined ? undefined : Number(req.query.beforeId);
