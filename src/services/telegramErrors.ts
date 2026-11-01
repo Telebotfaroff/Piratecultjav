@@ -58,9 +58,16 @@ export function isRetryableTelegramError(info: TelegramErrorInfo): boolean {
 
 export async function withTelegramRetry<T>(
   operation: () => Promise<T>,
-  options: { maxRetries?: number; label?: string } = {},
+  options: {
+    maxRetries?: number;
+    label?: string;
+    initialDelaySeconds?: number;
+    maxDelaySeconds?: number;
+  } = {},
 ): Promise<T> {
   const maxRetries = options.maxRetries ?? 3;
+  const initialDelaySeconds = Math.max(1, options.initialDelaySeconds ?? 1);
+  const maxDelaySeconds = Math.max(initialDelaySeconds, options.maxDelaySeconds ?? 8);
 
   for (let attempt = 0; ; attempt++) {
     try {
@@ -71,7 +78,7 @@ export async function withTelegramRetry<T>(
 
       const waitSeconds = info.kind === 'rate_limit'
         ? Math.max(1, info.retryAfterSeconds ?? 1)
-        : Math.min(8, 2 ** attempt);
+        : Math.min(maxDelaySeconds, initialDelaySeconds * (2 ** attempt));
 
       console.warn(
         '[Telegram]',
