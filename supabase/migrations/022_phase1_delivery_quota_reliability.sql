@@ -59,8 +59,7 @@ BEGIN
     END IF;
     SELECT u.plan, u.unlimited_until,
       CASE WHEN u.plan = 'premium' OR (u.unlimited_until IS NOT NULL AND u.unlimited_until > NOW()) THEN -1
-      ELSE GREATEST(0, COALESCE((SELECT (value->>'free')::INTEGER FROM bot_settings WHERE key='download_quotas'),20) -
-        CASE WHEN u.daily_download_date = CURRENT_DATE THEN u.daily_download_count ELSE 0 END) END AS remaining
+      ELSE 0 END AS remaining
     INTO result FROM users u WHERE u.telegram_user_id = p_user_id;
     RETURN QUERY SELECT TRUE, COALESCE(result.remaining, 0), COALESCE(result.plan, 'free'), result.unlimited_until;
     RETURN;
