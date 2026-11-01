@@ -246,10 +246,16 @@ export function createApp(): express.Express {
   // Jobs API: List jobs
   app.get('/api/jobs', adminOnly, async (req: Request, res: Response) => {
     try {
-      const statusFilter = (req.query.status as string) || undefined;
-      const limit = parseInt((req.query.limit as string) || '50', 10);
-      const jobs = await getRecentJobs(statusFilter, limit);
-      res.json({ ok: true, jobs });
+      const statusFilter = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const parsedLimit = Number.parseInt(String(req.query.limit || '50'), 10);
+      const limit = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 50, 1), 100);
+      const parsedCursor = req.query.beforeId === undefined ? undefined : Number(req.query.beforeId);
+      if (parsedCursor !== undefined && (!Number.isSafeInteger(parsedCursor) || parsedCursor <= 0)) {
+        return res.status(400).json({ ok: false, error: 'beforeId must be a positive integer' });
+      }
+      const jobs = await getRecentJobs(statusFilter, limit, parsedCursor);
+      const nextCursor = jobs.length === limit ? jobs[jobs.length - 1].id : null;
+      res.json({ ok: true, jobs, nextCursor });
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ ok: false, error: errMsg });
@@ -412,6 +418,7 @@ export function createApp(): express.Express {
         || (req.query.includeTotal !== 'false' && offset === 0);
 
       const result = await searchVideos(query, limit, offset, includeTotal);
+      res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=30');
       const payload: { ok: boolean; videos: ReturnType<typeof toPublicVideo>[]; total?: number } = {
         ok: true,
         videos: result.videos.map(toPublicVideo),
