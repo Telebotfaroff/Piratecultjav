@@ -97,14 +97,36 @@ export async function countUsers(): Promise<number> {
 }
 
 
-export async function getBroadcastUserIds(): Promise<number[]> {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
+export interface BroadcastRecipientPage {
+  userIds: number[];
+  nextCursor: number | null;
+}
+
+export async function getBroadcastRecipientPage(
+  afterId: number | null = null,
+  limit = 200,
+): Promise<BroadcastRecipientPage> {
+  const safeLimit = Math.min(Math.max(Number.isFinite(limit) ? Math.floor(limit) : 200, 1), 500);
+  let query = getSupabase()
     .from('users')
     .select('telegram_user_id')
-    .eq('is_blocked', false);
+    .eq('is_blocked', false)
+    .order('telegram_user_id', { ascending: true })
+    .limit(safeLimit);
+
+  if (afterId !== null) query = query.gt('telegram_user_id', afterId);
+
+  const { data, error } = await query;
   if (error) throw new Error(`Failed loading broadcast recipients: ${error.message}`);
-  return (data || []).map(row => Number(row.telegram_user_id)).filter(Number.isFinite);
+
+  const userIds = (data || [])
+    .map(row => Number(row.telegram_user_id))
+    .filter(id => Number.isSafeInteger(id) && id > 0);
+
+  return {
+    userIds,
+    nextCursor: userIds.length === safeLimit ? userIds[userIds.length - 1] : null,
+  };
 }
 
 
