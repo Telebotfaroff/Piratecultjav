@@ -1,90 +1,119 @@
-import { claimNextJob, updateJobStatus, recoverStaleJobs, IndexJob } from '../services/indexJobs.ts';
+import { randomUUID } from 'node:crypto';
+import {
+  claimNextJob,
+  updateJobStatus,
+  recoverStaleJobs,
+  renewJobLease,
+  IndexJob,
+} from '../services/indexJobs.ts';
 import { javtifulProvider, ProviderNotFoundError, ProviderTemporaryError } from '../providers/javtiful/index.ts';
 import { upsertVideoFromProvider } from '../services/videos.ts';
 
+const clampInt = (value: string | undefined, fallback: number, min: number, max: number): number => {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+};
+
 export class IndexerWorker {
   private isRunning = false;
-  private loopTimer: NodeJS.Timeout | null = null;
-  private readonly pollIntervalMs = 4000;
-  private readonly delayBetweenRequestsMs = 2000;
-  private readonly maxAttempts = 3;
-  private readonly staleJobMs = 15 * 60 * 1000;
-  private readonly recoveryIntervalMs = 60 * 1000;
+  private readonly pollIntervalMs = clampInt(process.env.INDEXER_POLL_INTERVAL_MS, 4000, 500, 60000);
+  private readonly delayBetweenRequestsMs = clampInt(process.env.INDEXER_PROVIDER_DELAY_MS, 2000, 0, 60000);
+  private readonly concurrency = clampInt(process.env.INDEXER_CONCURRENCY, 2, 1, 10);
+  private readonly maxAttempts = clampInt(process.env.INDEXER_MAX_ATTEMPTS, 3, 1, 10);
+  private readonly leaseSeconds = clampInt(process.env.INDEXER_LEASE_SECONDS, 180, 60, 1800);
+  private readonly heartbeatMs = Math.min(30000, Math.max(10000, Math.floor(this.leaseSeconds * 1000 / 3)));
+  private readonly recoveryIntervalMs = 30000;
   private lastRecoveryAt = 0;
+  private activeJobs = 0;
+  private loops: Promise<void>[] = [];
 
   public start(): void {
     if (this.isRunning) return;
     this.isRunning = true;
-    console.log('[IndexerWorker] Background worker started.');
-    this.scheduleNextTick(1000);
+    this.loops = Array.from({ length: this.concurrency }, (_, slot) => this.runLoop(slot));
+    console.log(`[IndexerWorker] Started with concurrency=${this.concurrency}, lease=${this.leaseSeconds}s.`);
   }
 
   public stop(): void {
     this.isRunning = false;
-    if (this.loopTimer) {
-      clearTimeout(this.loopTimer);
-      this.loopTimer = null;
-    }
-    console.log('[IndexerWorker] Background worker stopped.');
+    console.log('[IndexerWorker] Stop requested; active jobs will finish or lose their lease.');
   }
 
-  public getStatus(): { isRunning: boolean; pollIntervalMs: number } {
+  public getStatus(): { isRunning: boolean; pollIntervalMs: number; concurrency: number; activeJobs: number; leaseSeconds: number } {
     return {
       isRunning: this.isRunning,
       pollIntervalMs: this.pollIntervalMs,
+      concurrency: this.concurrency,
+      activeJobs: this.activeJobs,
+      leaseSeconds: this.leaseSeconds,
     };
   }
 
-  private scheduleNextTick(delayMs = this.pollIntervalMs): void {
-    if (!this.isRunning) return;
-    this.loopTimer = setTimeout(() => {
-      this.processNextJob()
-        .catch(err => {
-          console.error('[IndexerWorker] Unexpected error in worker tick:', err);
-        })
-        .finally(() => {
-          this.scheduleNextTick(this.pollIntervalMs);
-        });
-    }, delayMs);
-  }
-
-  private async processNextJob(): Promise<void> {
-    // Recover jobs stranded in "processing" by a crash/restart.
-    if (Date.now() - this.lastRecoveryAt >= this.recoveryIntervalMs) {
+  private async runLoop(slot: number): Promise<void> {
+    const workerId = `${process.env.HOSTNAME || 'indexer'}:${process.pid}:${slot}:${randomUUID()}`;
+    while (this.isRunning) {
       try {
-        const recovered = await recoverStaleJobs(this.staleJobMs);
-        if (recovered > 0) {
-          console.log(`[IndexerWorker] Recovered ${recovered} stale job(s).`);
+        await this.recoverExpiredLeasesIfDue();
+        const processed = await this.processNextJob(workerId);
+        if (!processed && this.isRunning) {
+          await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
         }
       } catch (err) {
-        console.warn('[IndexerWorker] Stale-job recovery failed:', err instanceof Error ? err.message : String(err));
+        console.error('[IndexerWorker] Worker loop error:', err instanceof Error ? err.message : String(err));
+        if (this.isRunning) await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
       }
-      this.lastRecoveryAt = Date.now();
     }
+  }
 
-    // 1. Atomically claim next queued job
-    let job: IndexJob | null = null;
+  private async recoverExpiredLeasesIfDue(): Promise<void> {
+    if (Date.now() - this.lastRecoveryAt < this.recoveryIntervalMs) return;
+    // Avoid every concurrency slot issuing the same recovery query.
+    this.lastRecoveryAt = Date.now();
+    const recovered = await recoverStaleJobs();
+    if (recovered > 0) console.warn(`[IndexerWorker] Requeued ${recovered} expired lease(s).`);
+  }
+
+  private async processNextJob(workerId: string): Promise<boolean> {
+    let job: IndexJob | null;
     try {
-      job = await claimNextJob();
-    } catch (claimErr) {
-      // Database might be unconfigured or unreachable
-      return;
+      job = await claimNextJob(workerId, this.leaseSeconds);
+    } catch (err) {
+      console.warn('[IndexerWorker] Job claim failed:', err instanceof Error ? err.message : String(err));
+      return false;
     }
+    if (!job) return false;
 
-    if (!job) {
-      return; // No queued jobs to process
-    }
+    this.activeJobs++;
+    console.log(`[IndexerWorker] ${workerId} claimed #${job.id} ${job.code} (attempt ${job.attempts}/${this.maxAttempts}).`);
 
-    console.log(`[IndexerWorker] Claimed job #${job.id} for code ${job.code} (Attempt ${job.attempts}/${this.maxAttempts})`);
+    let leaseLost = false;
+    let heartbeatBusy = false;
+    const heartbeat = setInterval(async () => {
+      if (heartbeatBusy || leaseLost) return;
+      heartbeatBusy = true;
+      try {
+        const renewed = await renewJobLease(job!.id, workerId, this.leaseSeconds);
+        if (!renewed) {
+          leaseLost = true;
+          console.warn(`[IndexerWorker] Lease lost for job #${job!.id}; this worker will not finalize it.`);
+        }
+      } catch (err) {
+        leaseLost = true;
+        console.error(`[IndexerWorker] Lease heartbeat failed for #${job!.id}; stopping ownership-sensitive work:`, err instanceof Error ? err.message : String(err));
+      } finally {
+        heartbeatBusy = false;
+      }
+    }, this.heartbeatMs);
 
     try {
-      // Respect delay before provider request to avoid hammering
-      await new Promise(r => setTimeout(r, this.delayBetweenRequestsMs));
+      if (this.delayBetweenRequestsMs) {
+        await new Promise(resolve => setTimeout(resolve, this.delayBetweenRequestsMs));
+      }
+      if (leaseLost) return true;
 
-      // 2. Fetch metadata from Javtiful
       const metadata = await javtifulProvider.getMetadata(job.code);
+      if (leaseLost) return true;
 
-      // 3. Persist metadata into Supabase videos table
       await upsertVideoFromProvider({
         code: job.code,
         dump_chat_id: job.dump_chat_id,
@@ -93,16 +122,15 @@ export class IndexerWorker {
         status: 'available',
       });
 
-      // 4. Mark job as completed
-      await updateJobStatus(job.id, 'completed', null);
-      console.log(`[IndexerWorker] Job #${job.id} (${job.code}) completed successfully.`);
+      const completed = await updateJobStatus(job.id, 'completed', null, null, workerId);
+      if (completed) console.log(`[IndexerWorker] Job #${job.id} (${job.code}) completed.`);
+      else console.warn(`[IndexerWorker] Job #${job.id} completion skipped because its lease is no longer owned.`);
     } catch (err: unknown) {
+      if (leaseLost) return true;
+      const message = err instanceof Error ? err.message : String(err);
+
       if (err instanceof ProviderNotFoundError) {
-        // Controlled not-found: Do not retry endlessly
-        console.warn(`[IndexerWorker] Job #${job.id} (${job.code}) not found on provider.`);
-        await updateJobStatus(job.id, 'failed', `Not found on Javtiful: ${err.message}`);
-        
-        // Still register video as failed so search shows status
+        await updateJobStatus(job.id, 'failed', `Not found on Javtiful: ${message}`, null, workerId);
         try {
           await upsertVideoFromProvider({
             code: job.code,
@@ -110,38 +138,29 @@ export class IndexerWorker {
             video_message_id: job.video_message_id,
             status: 'failed',
           });
-        } catch {
-          // Ignore
+        } catch (persistErr) {
+          console.warn(`[IndexerWorker] Could not persist not-found status for #${job.id}:`, persistErr);
         }
-      } else if (err instanceof ProviderTemporaryError || (err instanceof Error && err.name === 'AbortError')) {
-        // Temporary provider error (429, 500, timeout)
-        const errMsg = err instanceof Error ? err.message : String(err);
-        console.warn(`[IndexerWorker] Job #${job.id} temporary provider error: ${errMsg}`);
-
-        if (job.attempts < this.maxAttempts) {
-          // Requeue job for retry with exponential backoff info
-          const backoffSec = Math.pow(2, job.attempts) * 10;
-          const nextAttemptAt = new Date(Date.now() + backoffSec * 1000).toISOString();
-          console.log(`[IndexerWorker] Re-queueing job #${job.id} after backoff (~${backoffSec}s)...`);
-          await updateJobStatus(job.id, 'queued', `Temporary error (Attempt ${job.attempts}): ${errMsg}`, nextAttemptAt);
-        } else {
-          console.error(`[IndexerWorker] Job #${job.id} failed after reaching maximum attempts (${this.maxAttempts}).`);
-          await updateJobStatus(job.id, 'failed', `Max retry attempts (${this.maxAttempts}) exceeded: ${errMsg}`);
-        }
-      } else {
-        // Unexpected processing or database error
-        const errMsg = err instanceof Error ? err.message : String(err);
-        console.error(`[IndexerWorker] Job #${job.id} failed with error:`, errMsg);
-
-        if (job.attempts < this.maxAttempts) {
-          const backoffSec = Math.pow(2, job.attempts) * 10;
-          const nextAttemptAt = new Date(Date.now() + backoffSec * 1000).toISOString();
-          await updateJobStatus(job.id, 'queued', `Unexpected error: ${errMsg}`, nextAttemptAt);
-        } else {
-          await updateJobStatus(job.id, 'failed', `Failed: ${errMsg}`);
-        }
+        return true;
       }
+
+      const retryable = err instanceof ProviderTemporaryError || (err instanceof Error && err.name === 'AbortError');
+      if (job.attempts < this.maxAttempts) {
+        // Exponential backoff capped at five minutes; next_attempt_at is honored by the claim RPC.
+        const backoffSeconds = Math.min(300, 15 * (2 ** Math.max(0, job.attempts - 1)));
+        const nextAttemptAt = new Date(Date.now() + backoffSeconds * 1000).toISOString();
+        const prefix = retryable ? 'Temporary provider error' : 'Processing error';
+        await updateJobStatus(job.id, 'queued', `${prefix} (attempt ${job.attempts}): ${message}`, nextAttemptAt, workerId);
+        console.warn(`[IndexerWorker] Job #${job.id} queued for retry in ${backoffSeconds}s: ${message}`);
+      } else {
+        await updateJobStatus(job.id, 'failed', `Max attempts (${this.maxAttempts}) exceeded: ${message}`, null, workerId);
+        console.error(`[IndexerWorker] Job #${job.id} permanently failed: ${message}`);
+      }
+    } finally {
+      clearInterval(heartbeat);
+      this.activeJobs = Math.max(0, this.activeJobs - 1);
     }
+    return true;
   }
 }
 
