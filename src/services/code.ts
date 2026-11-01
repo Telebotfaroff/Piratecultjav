@@ -93,3 +93,10 @@ export function cleanTitle(title: string, code: string): string {
   return clean || title;
 }
 
+
+/** Extracts a database video ID from Telegram /start payloads (legacy numeric IDs or UUIDs). */
+export function extractVideoIdFromStartPayload(payload: string): string | null {
+  const match = /^v_(\\d+|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(payload.trim());
+  return match?.[1] ?? null;
+}
+
