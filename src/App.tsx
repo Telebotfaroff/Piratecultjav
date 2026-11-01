@@ -429,31 +429,41 @@ function CatalogPage({
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const fetchVideos = useCallback(async (search: string, currentPage: number) => {
+  const fetchVideos = useCallback(async (search: string, currentPage: number, signal: AbortSignal) => {
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams();
       params.set('limit', String(PAGE_SIZE));
       params.set('offset', String((currentPage - 1) * PAGE_SIZE));
+      params.set('includeTotal', currentPage === 1 ? 'true' : 'false');
       if (search.trim()) params.set('q', search.trim());
 
-      const response = await fetch('/api/videos?' + params.toString());
+      const response = await fetch('/api/videos?' + params.toString(), { signal });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to load catalog');
+      if (signal.aborted) return;
 
-      setVideos(data.videos || []);
-      setTotal(Number(data.total || 0));
+      setVideos(Array.isArray(data.videos) ? data.videos : []);
+      // Later pages omit COUNT(*) and retain the total obtained on page one.
+      if (typeof data.total === 'number' && Number.isFinite(data.total)) {
+        setTotal(data.total);
+      }
     } catch (err) {
+      if (signal.aborted || (err instanceof Error && err.name === 'AbortError')) return;
       setError(err instanceof Error ? err.message : 'Unable to load catalog');
       setVideos([]);
       setTotal(0);
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void fetchVideos(query, page); }, [fetchVideos, query, page]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchVideos(query, page, controller.signal);
+    return () => controller.abort();
+  }, [fetchVideos, query, page]);
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
