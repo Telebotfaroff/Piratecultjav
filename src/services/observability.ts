@@ -22,7 +22,7 @@ function boundedRoute(method: string, route: string): { method: string; route: s
   const safeMethod = method.toUpperCase().slice(0, 12);
   // Route templates are preferred; dynamic path segments are normalized as a fallback.
   const safeRoute = route.startsWith('/')
-    ? route.replace(/\/(?:\d+|[0-9a-f]{8}-[0-9a-f-]{27,}) (?=\/|$)/gi, '/:id').slice(0, 160)
+    ? route.replace(/\/(?:\d+|[0-9a-f]{8}-[0-9a-f-]{27,})(?=\/|$)/gi, '/:id').slice(0, 160)
     : '/unmatched';
   return { method: safeMethod, route: safeRoute || '/' };
 }
