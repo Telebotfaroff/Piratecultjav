@@ -8,6 +8,7 @@ import {
 } from '../services/indexJobs.ts';
 import { javtifulProvider, ProviderNotFoundError, ProviderTemporaryError } from '../providers/javtiful/index.ts';
 import { upsertVideoFromProvider } from '../services/videos.ts';
+import { logEvent } from '../services/observability.ts';
 
 const clampInt = (value: string | undefined, fallback: number, min: number, max: number): number => {
   const parsed = Number.parseInt(value || '', 10);
@@ -25,6 +26,11 @@ export class IndexerWorker {
   private readonly recoveryIntervalMs = 30000;
   private lastRecoveryAt = 0;
   private activeJobs = 0;
+  private completedJobs = 0;
+  private failedJobs = 0;
+  private lastJobAt: string | null = null;
+  private lastJobStatus: 'completed' | 'failed' | 'retrying' | null = null;
+  private lastErrorAt: string | null = null;
   private loops: Promise<void>[] = [];
   private providerGate: Promise<void> = Promise.resolve();
   private nextProviderRequestAt = 0;
@@ -45,13 +51,29 @@ export class IndexerWorker {
     console.log('[IndexerWorker] Worker stopped cleanly.');
   }
 
-  public getStatus(): { isRunning: boolean; pollIntervalMs: number; concurrency: number; activeJobs: number; leaseSeconds: number } {
+  public getStatus(): {
+    isRunning: boolean;
+    pollIntervalMs: number;
+    concurrency: number;
+    activeJobs: number;
+    leaseSeconds: number;
+    completedJobs: number;
+    failedJobs: number;
+    lastJobAt: string | null;
+    lastJobStatus: 'completed' | 'failed' | 'retrying' | null;
+    lastErrorAt: string | null;
+  } {
     return {
       isRunning: this.isRunning,
       pollIntervalMs: this.pollIntervalMs,
       concurrency: this.concurrency,
       activeJobs: this.activeJobs,
       leaseSeconds: this.leaseSeconds,
+      completedJobs: this.completedJobs,
+      failedJobs: this.failedJobs,
+      lastJobAt: this.lastJobAt,
+      lastJobStatus: this.lastJobStatus,
+      lastErrorAt: this.lastErrorAt,
     };
   }
 
@@ -65,7 +87,11 @@ export class IndexerWorker {
           await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
         }
       } catch (err) {
-        console.error('[IndexerWorker] Worker loop error:', err instanceof Error ? err.message : String(err));
+        this.lastErrorAt = new Date().toISOString();
+        logEvent('error', 'indexer.loop_error', {
+          errorName: err instanceof Error ? err.name : 'UnknownError',
+          message: err instanceof Error ? err.message.slice(0, 300) : 'Unknown worker loop error',
+        });
         if (this.isRunning) await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
       }
     }
@@ -120,7 +146,11 @@ export class IndexerWorker {
         }
       } catch (err) {
         leaseLost = true;
-        console.error(`[IndexerWorker] Lease heartbeat failed for #${job!.id}; stopping ownership-sensitive work:`, err instanceof Error ? err.message : String(err));
+        this.lastErrorAt = new Date().toISOString();
+        logEvent('error', 'indexer.heartbeat_failed', {
+          jobId: job!.id,
+          errorName: err instanceof Error ? err.name : 'UnknownError',
+        });
       } finally {
         heartbeatBusy = false;
       }
@@ -142,14 +172,25 @@ export class IndexerWorker {
       });
 
       const completed = await updateJobStatus(job.id, 'completed', null, null, workerId);
-      if (completed) console.log(`[IndexerWorker] Job #${job.id} (${job.code}) completed.`);
-      else console.warn(`[IndexerWorker] Job #${job.id} completion skipped because its lease is no longer owned.`);
+      if (completed) {
+        this.completedJobs++;
+        this.lastJobAt = new Date().toISOString();
+        this.lastJobStatus = 'completed';
+        logEvent('info', 'indexer.job_completed', { jobId: job.id, code: job.code });
+      } else {
+        logEvent('warn', 'indexer.job_finalize_skipped', { jobId: job.id });
+      }
     } catch (err: unknown) {
       if (leaseLost) return true;
       const message = err instanceof Error ? err.message : String(err);
 
       if (err instanceof ProviderNotFoundError) {
-        await updateJobStatus(job.id, 'failed', `Not found on Javtiful: ${message}`, null, workerId);
+        const markedFailed = await updateJobStatus(job.id, 'failed', `Not found on Javtiful: ${message}`, null, workerId);
+        if (markedFailed) {
+          this.failedJobs++;
+          this.lastJobAt = new Date().toISOString();
+          this.lastJobStatus = 'failed';
+        }
         try {
           await upsertVideoFromProvider({
             code: job.code,
@@ -170,10 +211,28 @@ export class IndexerWorker {
         const nextAttemptAt = new Date(Date.now() + backoffSeconds * 1000).toISOString();
         const prefix = retryable ? 'Temporary provider error' : 'Processing error';
         await updateJobStatus(job.id, 'queued', `${prefix} (attempt ${job.attempts}): ${message}`, nextAttemptAt, workerId);
-        console.warn(`[IndexerWorker] Job #${job.id} queued for retry in ${backoffSeconds}s: ${message}`);
+        this.lastJobAt = new Date().toISOString();
+        this.lastJobStatus = 'retrying';
+        logEvent('warn', 'indexer.job_retry_scheduled', {
+          jobId: job.id,
+          attempt: job.attempts,
+          retryInSeconds: backoffSeconds,
+          errorName: err instanceof Error ? err.name : 'UnknownError',
+        });
       } else {
-        await updateJobStatus(job.id, 'failed', `Max attempts (${this.maxAttempts}) exceeded: ${message}`, null, workerId);
-        console.error(`[IndexerWorker] Job #${job.id} permanently failed: ${message}`);
+        const markedFailed = await updateJobStatus(job.id, 'failed', `Max attempts (${this.maxAttempts}) exceeded: ${message}`, null, workerId);
+        if (markedFailed) {
+          this.failedJobs++;
+          this.lastJobAt = new Date().toISOString();
+          this.lastJobStatus = 'failed';
+        }
+        this.lastErrorAt = new Date().toISOString();
+        logEvent('error', 'indexer.job_failed', {
+          jobId: job.id,
+          attempt: job.attempts,
+          errorName: err instanceof Error ? err.name : 'UnknownError',
+          message: message.slice(0, 300),
+        });
       }
     } finally {
       clearInterval(heartbeat);
