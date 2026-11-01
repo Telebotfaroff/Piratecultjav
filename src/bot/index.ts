@@ -3273,8 +3273,14 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
         console.warn('[TelegramBot] Could not register command menu:', err instanceof Error ? err.message : String(err));
       });
       if (config.dumpChatId) {
-        await candidateBot.telegram.getChat(config.dumpChatId);
-        await candidateBot.telegram.getChatMember(config.dumpChatId, me.id);
+        await withTelegramRetry(
+          () => candidateBot.telegram.getChat(config.dumpChatId),
+          { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} webhook dump-channel getChat` },
+        );
+        await withTelegramRetry(
+          () => candidateBot.telegram.getChatMember(config.dumpChatId, me.id),
+          { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} webhook dump-channel membership` },
+        );
       }
       return candidateBot;
     } catch (err: unknown) {
