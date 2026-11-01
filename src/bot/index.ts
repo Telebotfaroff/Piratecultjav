@@ -5,7 +5,7 @@ import { config, isAdmin } from '../config.ts';
 import { normalizeCode, extractCodes, cleanActressList, cleanTitle } from '../services/code.ts';
 import { searchVideos, getVideoById, getVideoByCode, upsertVideoFromProvider, countVideos, updateVideoMetadata, deleteVideo, updateVideoStatus } from '../services/videos.ts';
 import { createIndexJob, countJobs, getRecentJobs, retryJob } from '../services/indexJobs.ts';
-import { upsertUser, isUserBlocked, setUserBlocked, countUsers, getBroadcastUserIds, getUser, getUserDashboard, getReferralLeaderboard, redeemPromoCode, createPromoCode, listPremiumPayments, listPromoCodes, setPromoCodeActive, consumeVideoDownload, refundVideoDownload, getDownloadQuotaSettings, setDownloadQuotaSettings, registerReferral, completeReferral, setUserPlan } from '../services/users.ts';
+import { upsertUser, isUserBlocked, setUserBlocked, countUsers, getBroadcastRecipientPage, getUser, getUserDashboard, getReferralLeaderboard, redeemPromoCode, createPromoCode, listPremiumPayments, listPromoCodes, setPromoCodeActive, consumeVideoDownload, refundVideoDownload, getDownloadQuotaSettings, setDownloadQuotaSettings, registerReferral, completeReferral, setUserPlan } from '../services/users.ts';
 import { checkUserForceSub, getAllForceSubChannels, upsertForceSubChannel, updateForceSubChannel, deleteForceSubChannel, createForceSubInviteLink } from '../services/forceSub.ts';
 import { getAdminSession, setAdminSession, clearAdminSession } from '../services/adminSessions.ts';
 import { javtifulProvider } from '../providers/javtiful/index.ts';
@@ -998,26 +998,28 @@ bot.command('start', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     const text = ctx.message.text.replace(/^\/broadcast\s*/i, '').trim();
     if (!text) return ctx.reply('Usage: /broadcast <message>');
-    const userIds = await getBroadcastUserIds();
     let sent = 0;
     let failed = 0;
-    for (let i = 0; i < userIds.length; i += 25) {
-      const batch = userIds.slice(i, i + 25);
-      await Promise.all(batch.map(async (userId) => {
-        try {
-          await withTelegramRetry(() => bot.telegram.sendMessage(userId, text), { label: `broadcast:${userId}` });
-          sent++;
-        } catch (error) {
-          const info = classifyTelegramError(error);
-          if (info.kind === 'blocked') {
-            try { await setUserBlocked(userId, true); } catch { /* keep broadcast running */ }
+    let cursor: number | null = null;
+    do {
+      const page: { userIds: number[]; nextCursor: number | null } = await getBroadcastRecipientPage(cursor, 200);
+      for (let i = 0; i < page.userIds.length; i += 20) {
+        await Promise.all(page.userIds.slice(i, i + 20).map(async (userId: number) => {
+          try {
+            await withTelegramRetry(() => bot.telegram.sendMessage(userId, text), { label: `broadcast:${userId}` });
+            sent++;
+          } catch (error) {
+            if (classifyTelegramError(error).kind === 'blocked') {
+              try { await setUserBlocked(userId, true); } catch { /* continue */ }
+            }
+            failed++;
           }
-          failed++;
-        }
-      }));
-      await new Promise(resolve => setTimeout(resolve, 1100));
-    }
-    return ctx.reply(`📣 Broadcast finished.\n\n✅ Sent: ${sent}\n❌ Failed: ${failed}`);
+        }));
+        if (i + 20 < page.userIds.length) await new Promise(resolve => setTimeout(resolve, 800));
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    return ctx.reply(`📣 Broadcast finished.\\n\\n✅ Sent: ${sent}\\n❌ Failed: ${failed}`);
   });
 
   bot.command('jobs', async (ctx) => {
@@ -1870,24 +1872,28 @@ bot.command('start', async (ctx) => {
     await ctx.answerCbQuery('Broadcast started…');
     await clearAdminSession(ctx.from!.id);
     try {
-      const userIds = await getBroadcastUserIds();
-      let sent = 0, failed = 0;
-      for (let i = 0; i < userIds.length; i += 25) {
-        const batch = userIds.slice(i, i + 25);
-        await Promise.all(batch.map(async (userId) => {
-          try {
-            await withTelegramRetry(() => bot.telegram.sendMessage(userId, message), { label: 'broadcast:' + userId });
-            sent++;
-          } catch (error) {
-            failed++;
-            if (classifyTelegramError(error).kind === 'blocked') {
-              try { await setUserBlocked(userId, true); } catch { /* keep broadcast running */ }
+      let sent = 0, failed = 0, total = 0;
+      let cursor: number | null = null;
+      do {
+        const page: { userIds: number[]; nextCursor: number | null } = await getBroadcastRecipientPage(cursor, 200);
+        total += page.userIds.length;
+        for (let i = 0; i < page.userIds.length; i += 20) {
+          await Promise.all(page.userIds.slice(i, i + 20).map(async (userId: number) => {
+            try {
+              await withTelegramRetry(() => bot.telegram.sendMessage(userId, message), { label: 'broadcast:' + userId });
+              sent++;
+            } catch (error) {
+              failed++;
+              if (classifyTelegramError(error).kind === 'blocked') {
+                try { await setUserBlocked(userId, true); } catch { /* continue */ }
+              }
             }
-          }
-        }));
-        if (i + 25 < userIds.length) await new Promise(resolve => setTimeout(resolve, 1100));
-      }
-      return ctx.editMessageText('📣 <b>Broadcast finished</b>\n\n👥 Recipients: <b>' + userIds.length + '</b>\n✅ Sent: <b>' + sent + '</b>\n❌ Failed: <b>' + failed + '</b>', {
+          }));
+          if (i + 20 < page.userIds.length) await new Promise(resolve => setTimeout(resolve, 800));
+        }
+        cursor = page.nextCursor;
+      } while (cursor !== null);
+      return ctx.editMessageText('📣 <b>Broadcast finished</b>\n\n👥 Recipients: <b>' + total + '</b>\n✅ Sent: <b>' + sent + '</b>\n❌ Failed: <b>' + failed + '</b>', {
         parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Admin Center', 'settings:main')]]),
       });
     } catch (err) {
