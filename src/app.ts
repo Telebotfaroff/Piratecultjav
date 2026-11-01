@@ -22,12 +22,29 @@ const publicRateBuckets = new Map<string, { windowStart: number; count: number }
 const PUBLIC_RATE_WINDOW_MS = 60_000;
 const PUBLIC_RATE_MAX = 120;
 const PUBLIC_SEARCH_MAX_LENGTH = 120;
+const PUBLIC_RATE_BUCKET_MAX = 10_000;
+let lastPublicRateCleanupAt = 0;
 
 function publicRateLimit(req: Request, res: Response, next: express.NextFunction): void {
   // Do not trust a client-supplied X-Forwarded-For header. Configure Express
   // trust proxy explicitly at deployment time if requests arrive through a trusted proxy.
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const now = Date.now();
+
+  // Opportunistically evict expired IP buckets so unique-client traffic cannot
+  // grow this in-process limiter map without bound.
+  if (now - lastPublicRateCleanupAt >= PUBLIC_RATE_WINDOW_MS) {
+    lastPublicRateCleanupAt = now;
+    for (const [key, value] of publicRateBuckets) {
+      if (now - value.windowStart >= PUBLIC_RATE_WINDOW_MS) publicRateBuckets.delete(key);
+    }
+  }
+
+  if (publicRateBuckets.size >= PUBLIC_RATE_BUCKET_MAX && !publicRateBuckets.has(ip)) {
+    const oldestKey = publicRateBuckets.keys().next().value;
+    if (oldestKey !== undefined) publicRateBuckets.delete(oldestKey);
+  }
+
   const bucket = publicRateBuckets.get(ip);
   if (!bucket || now - bucket.windowStart >= PUBLIC_RATE_WINDOW_MS) {
     publicRateBuckets.set(ip, { windowStart: now, count: 1 });
