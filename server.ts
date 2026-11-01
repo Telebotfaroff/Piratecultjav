@@ -4,6 +4,7 @@ import { createApp } from './src/app.ts';
 import { config } from './src/config.ts';
 import { indexerWorker } from './src/workers/indexer.ts';
 import { startBotPolling, startBotWebhook, stopBotRuntime } from './src/bot/index.ts';
+import { runDatabaseMigrations } from './src/database/migrate.ts';
 
 async function startServer() {
   // Prepare a fresh Supabase PostgreSQL database before any bot or API code runs.
