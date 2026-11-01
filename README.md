@@ -67,6 +67,20 @@ Set the deployment platform's start command to `npm start` and its build command
 4. Configure the matching environment variables.
 5. Verify that the required tables and database functions exist.
 
+## Indexer worker tuning
+
+The background indexer uses Supabase PostgreSQL for atomic job claiming and renewable leases. Apply migrations `002_retry_recovery.sql` and `023_indexer_worker_leases.sql` before deploying the lease-aware worker. Configure these optional environment variables to tune throughput and recovery:
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `INDEXER_CONCURRENCY` | `2` | Concurrent indexing jobs per application instance (1–10) |
+| `INDEXER_POLL_INTERVAL_MS` | `4000` | Idle queue polling interval |
+| `INDEXER_PROVIDER_DELAY_MS` | `2000` | Delay before each provider request |
+| `INDEXER_MAX_ATTEMPTS` | `3` | Maximum attempts before permanent failure |
+| `INDEXER_LEASE_SECONDS` | `180` | Renewable job lease duration (60–1800 seconds) |
+
+Each worker slot has a unique owner ID. Jobs are claimed with PostgreSQL `FOR UPDATE SKIP LOCKED`, heartbeats renew active leases, and recovery only requeues expired leases. Increase concurrency gradually and monitor provider rate limits and Supabase load.
+
 ## HTTP endpoints
 
 - `/health` — basic process health
