@@ -23,5 +23,7 @@ jobs:
         run: npm install
       - name: Type-check
         run: npm run lint
+      - name: Unit tests
+        run: npm test
       - name: Build frontend and server
         run: npm run build
