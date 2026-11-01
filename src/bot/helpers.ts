@@ -584,8 +584,21 @@ async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: strin
 
       for (const video of result.videos) {
         if (localRemaining <= 0) {
-          exhaustedQuota = true;
-          break;
+          // Refresh only when the local estimate reaches zero. Failed deliveries
+          // may have refunded their reservation, so don't stop on a stale estimate.
+          const refreshed = await getUserDashboard(ctx.from.id);
+          if (!refreshed) {
+            await ctx.reply('⚠️ Could not refresh your account allowance. Bulk delivery stopped.');
+            exhaustedQuota = true;
+            break;
+          }
+          localRemaining = refreshed.is_unlimited
+            ? Number.POSITIVE_INFINITY
+            : Math.max(0, refreshed.daily_remaining);
+          if (localRemaining <= 0) {
+            exhaustedQuota = true;
+            break;
+          }
         }
 
         await deliverVideoToUser(bot, ctx, String(video.id), 'search', {
