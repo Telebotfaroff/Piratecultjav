@@ -26,6 +26,8 @@ export class IndexerWorker {
   private lastRecoveryAt = 0;
   private activeJobs = 0;
   private loops: Promise<void>[] = [];
+  private providerGate: Promise<void> = Promise.resolve();
+  private nextProviderRequestAt = 0;
 
   public start(): void {
     if (this.isRunning) return;
@@ -73,6 +75,21 @@ export class IndexerWorker {
     if (recovered > 0) console.warn(`[IndexerWorker] Requeued ${recovered} expired lease(s).`);
   }
 
+  /** Enforces one shared provider-request start interval across all local worker slots. */
+  private async waitForProviderTurn(): Promise<void> {
+    let release!: () => void;
+    const previous = this.providerGate;
+    this.providerGate = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+      const waitMs = Math.max(0, this.nextProviderRequestAt - Date.now());
+      if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
+      this.nextProviderRequestAt = Date.now() + this.delayBetweenRequestsMs;
+    } finally {
+      release();
+    }
+  }
+
   private async processNextJob(workerId: string): Promise<boolean> {
     let job: IndexJob | null;
     try {
@@ -106,9 +123,7 @@ export class IndexerWorker {
     }, this.heartbeatMs);
 
     try {
-      if (this.delayBetweenRequestsMs) {
-        await new Promise(resolve => setTimeout(resolve, this.delayBetweenRequestsMs));
-      }
+      await this.waitForProviderTurn();
       if (leaseLost) return true;
 
       const metadata = await javtifulProvider.getMetadata(job.code);
