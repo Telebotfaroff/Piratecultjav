@@ -25,13 +25,13 @@ export async function getActiveForceSubChannels(): Promise<ForceSubChannel[]> {
       .eq('is_active', true);
 
     if (error) {
-      console.warn('Error fetching force-sub channels:', error.message);
-      return [];
+      throw new Error(`Failed fetching force-sub channels: ${error.message}`);
     }
 
     return (data as ForceSubChannel[]) || [];
-  } catch {
-    return [];
+  } catch (err) {
+    if (err instanceof Error) throw err;
+    throw new Error('Failed fetching force-sub channels.');
   }
 }
 
@@ -44,10 +44,12 @@ export async function isForceSubGloballyEnabled(): Promise<boolean> {
       .eq('key', 'force_sub_enabled')
       .maybeSingle();
 
-    if (error || !data) return false;
+    if (error) throw new Error(`Failed checking force-sub setting: ${error.message}`);
+    if (!data) return false;
     return Boolean(data.value);
-  } catch {
-    return false;
+  } catch (err) {
+    if (err instanceof Error) throw err;
+    throw new Error('Failed checking force-sub setting.');
   }
 }
 
@@ -71,31 +73,33 @@ export async function checkUserForceSub(
   }
 
   const missing: ForceSubChannel[] = [];
+  const concurrency = 5;
 
-  for (const ch of channels) {
-    try {
-      const member = await bot.telegram.getChatMember(ch.channel_id, userId);
-      // Request mode uses the same Telegram membership check: a pending join request
-      // remains `left`/unapproved, while an admin-approved request becomes `member`.
-      // This means users are only unlocked after the channel admin approves them.
-      const isMember = member.status === 'creator' ||
-        member.status === 'administrator' ||
-        member.status === 'member' ||
-        (member.status === 'restricted' && 'is_member' in member && Boolean(member.is_member));
-      if (!isMember) {
-        missing.push(ch);
+  // Check a small batch concurrently to reduce Telegram round-trip latency without
+  // creating an unbounded burst when admins configure many required channels.
+  for (let offset = 0; offset < channels.length; offset += concurrency) {
+    const batch = channels.slice(offset, offset + concurrency);
+    const results = await Promise.all(batch.map(async (ch) => {
+      try {
+        const member = await bot.telegram.getChatMember(ch.channel_id, userId);
+        // A pending join request remains left/unapproved until an admin approves it.
+        const isMember = member.status === 'creator' ||
+          member.status === 'administrator' ||
+          member.status === 'member' ||
+          (member.status === 'restricted' && 'is_member' in member && Boolean(member.is_member));
+        return isMember ? null : ch;
+      } catch (err) {
+        console.warn(`Could not verify membership for user ${userId} in channel ${ch.channel_id}:`, err);
+        // Fail closed when Telegram cannot verify membership.
+        return ch;
       }
-    } catch (err) {
-      console.warn(`Could not verify membership for user ${userId} in channel ${ch.channel_id}:`, err);
-      missing.push(ch);
-      // Fail closed when force-sub is enabled: an unverifiable membership must not bypass the gate.
+    }));
+    for (const result of results) {
+      if (result) missing.push(result);
     }
   }
 
-  return {
-    passed: missing.length === 0,
-    missingChannels: missing,
-  };
+  return { passed: missing.length === 0, missingChannels: missing };
 }
 
 
