@@ -58,5 +58,23 @@ BEGIN
 END;
 $$;
 
--- Keep the legacy no-argument RPC available for old deployments, but prevent
--- the new worker from using it: Phase 3 always supplies an explicit owner ID.
+-- Backfill jobs that were already processing when this migration is deployed.
+UPDATE public.index_jobs
+   SET worker_id = COALESCE(worker_id, 'legacy-worker'),
+       lease_expires_at = COALESCE(lease_expires_at, COALESCE(updated_at, NOW()) + INTERVAL '15 minutes')
+ WHERE status = 'processing'
+   AND lease_expires_at IS NULL;
+
+-- Preserve compatibility with older application instances during rolling deploys.
+-- The old client calls the no-argument RPC; give those jobs a longer lease.
+CREATE OR REPLACE FUNCTION public.claim_next_index_job()
+RETURNS SETOF public.index_jobs
+LANGUAGE plpgsql
+SET search_path = public
+AS $
+BEGIN
+  RETURN QUERY
+  SELECT *
+    FROM public.claim_next_index_job('legacy:' || gen_random_uuid()::TEXT, 900);
+END;
+$;
