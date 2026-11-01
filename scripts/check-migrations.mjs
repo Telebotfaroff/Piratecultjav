@@ -5,7 +5,37 @@ const directory = new URL('../supabase/migrations/', import.meta.url);
 const entries = (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort();
 const errors = [];
 const versions = new Map();
-const legacyDuplicateVersions = new Set(['004', '005']);
+const legacyDuplicateFiles = {
+  '004': ['004_delete_timer.sql', '004_force_sub_chat_id_compat.sql', '004_missed_metadata_codes.sql'],
+  '005': ['005_referrals_and_download_plans.sql', '005_screenshot_images.sql'],
+};
+const baselineFiles = new Set([
+  '001_initial_schema.sql',
+  '002_retry_recovery.sql',
+  '003_force_sub_request_mode.sql',
+  '004_delete_timer.sql',
+  '004_force_sub_chat_id_compat.sql',
+  '004_missed_metadata_codes.sql',
+  '005_referrals_and_download_plans.sql',
+  '005_screenshot_images.sql',
+  '006_access_engine.sql',
+  '007_referral_abuse_protection.sql',
+  '009_promo_codes.sql',
+  '010_star_premium_payments.sql',
+  '011_security_indexes.sql',
+  '012_video_delivery_analytics.sql',
+  '013_live_schema_compatibility.sql',
+  '018_configurable_download_quotas.sql',
+  '019_referral_locking_hardening.sql',
+  '020_promo_hardening.sql',
+  '021_stars_payment_hardening.sql',
+  '022_phase1_delivery_quota_reliability.sql',
+  '023_indexer_worker_leases.sql',
+  '024_available_code_search_trgm.sql',
+  '025_delivery_analytics_aggregation.sql',
+  '026_referral_leaderboard_aggregation.sql',
+  '027_service_role_data_api_grants.sql',
+]);
 
 if (entries.length === 0) errors.push('No SQL migrations were found.');
 
@@ -16,6 +46,9 @@ for (const name of entries) {
     continue;
   }
   const [, version] = match;
+  if (!baselineFiles.has(name) && Number(version) <= 27) {
+    errors.push(`New migration must use a version greater than 027: ${name}`);
+  }
   const paths = versions.get(version) || [];
   paths.push(name);
   versions.set(version, paths);
