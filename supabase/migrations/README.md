@@ -1,6 +1,6 @@
 # Database migration notes
 
-The repository currently contains 24 SQL migration files through version 026.
+The repository currently contains 24 SQL migration files through version 027.
 
 ## Important legacy naming issue
 
@@ -17,7 +17,7 @@ The CI migration check preserves these existing filenames as a known legacy exce
 ## Adding a migration
 
 1. Create the migration using the Supabase CLI's migration generator.
-2. Use a unique version greater than `026`.
+2. Use a unique version greater than `027`.
 3. Keep the SQL idempotent where practical and review locking/availability impact.
 4. Run `npm run check:migrations`, tests, and CI.
 5. Apply only after confirming the target Supabase project and reviewing its current migration history.
