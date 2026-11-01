@@ -71,10 +71,10 @@ CREATE OR REPLACE FUNCTION public.claim_next_index_job()
 RETURNS SETOF public.index_jobs
 LANGUAGE plpgsql
 SET search_path = public
-AS $
+AS $$
 BEGIN
   RETURN QUERY
   SELECT *
     FROM public.claim_next_index_job('legacy:' || gen_random_uuid()::TEXT, 900);
 END;
-$;
+$$;
