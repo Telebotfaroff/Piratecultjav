@@ -13,6 +13,7 @@ import { getAllSettings, setSetting } from './services/settings.ts';
 import { isBotActive, getBot, getBotUsername } from './bot/index.ts';
 import { indexerWorker } from './workers/indexer.ts';
 import { getScreenshotImagesByCode, getScreenshotImageById } from './services/screenshotImages.ts';
+import { getHttpMetrics, httpMetricsMiddleware } from './services/observability.ts';
 
 const adminSessions = new Map<string, number>();
 
@@ -105,6 +106,7 @@ export function createApp(): express.Express {
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
   });
+  app.use(httpMetricsMiddleware);
   app.use(express.json({ limit: '100kb' }));
 
   app.post('/api/auth/login', publicRateLimit, (req: Request, res: Response) => {
@@ -238,8 +240,19 @@ export function createApp(): express.Express {
         active: isBotActive(),
       },
       worker: indexerWorker.getStatus(),
+      http: getHttpMetrics(),
       counts,
       latencyMs: Date.now() - startTime,
+    });
+  });
+
+  // In-process request metrics are admin-only and intentionally bounded by route template.
+  app.get('/api/metrics', adminOnly, (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({
+      ok: true,
+      http: getHttpMetrics(),
+      worker: indexerWorker.getStatus(),
     });
   });
 
