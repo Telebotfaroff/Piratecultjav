@@ -23,6 +23,8 @@ jobs:
         run: npm install
       - name: Type-check
         run: npm run lint
+      - name: Verify database migrations
+        run: npm run check:migrations
       - name: Unit tests
         run: npm test
       - name: Build frontend and server
