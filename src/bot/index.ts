@@ -13,7 +13,7 @@ import { recordMissedCode, listMissedCodes, removeMissedCode } from '../services
 import { sendDumpVideoToUser, storeThumbnailInDumpChannel } from '../services/dump.ts';
 import { installMessageDeleteTimer } from '../services/messageDeleteTimer.ts';
 import { getSetting, setSetting } from '../services/settings.ts';
-import { classifyTelegramError, withTelegramRetry } from '../services/telegramErrors.ts';
+import { classifyTelegramError, isRetryableTelegramError, withTelegramRetry } from '../services/telegramErrors.ts';
 import { recordVideoDeliveryEvent, getVideoDeliveryAnalytics } from '../services/videoAnalytics.ts';
 import { deliverVideoToUser, downloadAllSearchResults, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer } from './helpers.ts';
 import { registerPaymentEvents } from './events/payments.ts';
@@ -27,6 +27,7 @@ let isPollingActive = false;
 let isWebhookActive = false;
 let webhookApp: Express | null = null;
 let webhookRouteRegistered = false;
+let webhookRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let pollingLaunchGeneration = 0;
 let runtimeFailoverAttempted = false;
 let runtimeHealthTimer: ReturnType<typeof setInterval> | null = null;
@@ -3158,8 +3159,14 @@ export async function startBotPolling(): Promise<boolean> {
 
       // Verify the replacement bot can access the persistent dump channel.
       if (config.dumpChatId) {
-        await candidateBot.telegram.getChat(config.dumpChatId);
-        await candidateBot.telegram.getChatMember(config.dumpChatId, me.id);
+        await withTelegramRetry(
+          () => candidateBot.telegram.getChat(config.dumpChatId),
+          { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} dump-channel getChat` },
+        );
+        await withTelegramRetry(
+          () => candidateBot.telegram.getChatMember(config.dumpChatId, me.id),
+          { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} dump-channel membership` },
+        );
       }
       return candidateBot;
     } catch (err: unknown) {
@@ -3211,6 +3218,21 @@ export async function startBotPolling(): Promise<boolean> {
   }
 }
 
+function scheduleWebhookRecovery(app: Express, delayMs = 30_000): void {
+  if (webhookRecoveryTimer || isWebhookActive) return;
+  webhookApp = app;
+  webhookRecoveryTimer = setTimeout(() => {
+    webhookRecoveryTimer = null;
+    if (isWebhookActive) return;
+    console.warn('[TelegramBot] Retrying webhook startup after a temporary Telegram API failure.');
+    void startBotWebhook(app).catch(error => {
+      console.error('[TelegramBot] Background webhook recovery failed:', error instanceof Error ? error.message : String(error));
+      scheduleWebhookRecovery(app);
+    });
+  }, delayMs);
+  webhookRecoveryTimer.unref?.();
+}
+
 /** Starts the configured Telegram bot using Telegram's HTTPS webhook delivery. */
 export async function startBotWebhook(app: Express): Promise<boolean> {
   if (!config.webhookUrl || !config.webhookSecret) {
@@ -3234,7 +3256,10 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
     if (!token) return null;
     const candidateBot = createBot(token);
     try {
-      const me = await candidateBot.telegram.getMe();
+      const me = await withTelegramRetry(
+        () => candidateBot.telegram.getMe(),
+        { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} webhook getMe` },
+      );
       console.log(`[TelegramBot] ${candidate.toUpperCase()} bot validated for webhook: @${me.username || me.id}`);
       await candidateBot.telegram.setMyCommands([
         { command: 'start', description: 'Open the main menu' },
@@ -3254,18 +3279,39 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
       return candidateBot;
     } catch (err: unknown) {
       const info = classifyTelegramError(err);
+      if (isRetryableTelegramError(info)) throw err;
       console.error(`[TelegramBot] ${candidate.toUpperCase()} webhook validation failed: ${info.message}`);
       return null;
     }
   };
 
-  let bot = await validateAndBuild(role);
+  let bot: Telegraf | null = null;
+  try {
+    bot = await validateAndBuild(role);
+  } catch (err) {
+    const info = classifyTelegramError(err);
+    console.warn(`[TelegramBot] ${role.toUpperCase()} Telegram API is temporarily unavailable: ${info.message}`);
+    scheduleWebhookRecovery(app);
+    return false;
+  }
+
   if (!bot && !runtimeFailoverAttempted) {
     const fallback = role === 'primary' ? 'backup' : 'primary';
-    if (!tokenForRole(fallback)) return false;
-    console.warn(`[TelegramBot] Falling back from ${role} to ${fallback} bot for webhook mode.`);
-    role = fallback;
-    bot = await validateAndBuild(role);
+    if (tokenForRole(fallback)) {
+      console.warn(`[TelegramBot] Falling back from ${role} to ${fallback} bot for webhook mode.`);
+      try {
+        const fallbackBot = await validateAndBuild(fallback);
+        if (fallbackBot) {
+          role = fallback;
+          bot = fallbackBot;
+        }
+      } catch (err) {
+        const info = classifyTelegramError(err);
+        console.warn(`[TelegramBot] ${fallback.toUpperCase()} Telegram API is temporarily unavailable: ${info.message}`);
+        scheduleWebhookRecovery(app);
+        return false;
+      }
+    }
   }
   if (!bot) {
     console.error('[TelegramBot] No configured bot could be validated. Webhook not started.');
@@ -3289,12 +3335,19 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
 
   const webhookUrl = `${config.webhookUrl}${config.webhookPath}`;
   try {
-    await bot.telegram.setWebhook(webhookUrl, {
-      secret_token: config.webhookSecret,
-      max_connections: 40,
-      allowed_updates: ['message', 'channel_post', 'callback_query', 'pre_checkout_query'],
-      drop_pending_updates: false,
-    });
+    await withTelegramRetry(
+      () => bot!.telegram.setWebhook(webhookUrl, {
+        secret_token: config.webhookSecret,
+        max_connections: 40,
+        allowed_updates: ['message', 'channel_post', 'callback_query', 'pre_checkout_query'],
+        drop_pending_updates: false,
+      }),
+      { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: 'setWebhook' },
+    );
+    if (webhookRecoveryTimer) {
+      clearTimeout(webhookRecoveryTimer);
+      webhookRecoveryTimer = null;
+    }
     isWebhookActive = true;
     isPollingActive = false;
     startRuntimeHealthMonitor();
@@ -3302,7 +3355,9 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
     return true;
   } catch (err: unknown) {
     isWebhookActive = false;
-    console.error('[TelegramBot] Failed to configure webhook:', err instanceof Error ? err.message : String(err));
+    const info = classifyTelegramError(err);
+    console.error('[TelegramBot] Failed to configure webhook:', info.message);
+    if (isRetryableTelegramError(info)) scheduleWebhookRecovery(app);
     return false;
   }
 }
@@ -3343,6 +3398,10 @@ export function stopBotPolling(): void {
 }
 
 export async function stopBotRuntime(): Promise<void> {
+  if (webhookRecoveryTimer) {
+    clearTimeout(webhookRecoveryTimer);
+    webhookRecoveryTimer = null;
+  }
   if (pendingNotFoundWatcher) {
     clearInterval(pendingNotFoundWatcher);
     pendingNotFoundWatcher = null;
