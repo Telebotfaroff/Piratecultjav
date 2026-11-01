@@ -130,6 +130,22 @@ export async function getBroadcastRecipientPage(
 }
 
 
+/** Compatibility helper for existing admin API and legacy command call sites.
+ * New bulk operations should use getBroadcastRecipientPage() directly.
+ */
+export async function getBroadcastUserIds(): Promise<number[]> {
+  const allIds: number[] = [];
+  let cursor: number | null = null;
+  while (true) {
+    const page: BroadcastRecipientPage = await getBroadcastRecipientPage(cursor, 500);
+    allIds.push(...page.userIds);
+    if (page.nextCursor === null) break;
+    cursor = page.nextCursor;
+  }
+  return allIds;
+}
+
+
 export interface DownloadQuotaSettings {
   free: number;
   semi_premium: number;
