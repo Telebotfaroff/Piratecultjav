@@ -89,6 +89,13 @@ On `SIGTERM` or `SIGINT`, the server stops accepting new HTTP connections, remov
 
 A runtime failover is intentionally one-way and limited to one attempt per process to avoid flapping. After correcting the primary bot issue, restart the service or manually switch back from the admin controls.
 
+
+## Supabase read caching
+
+Read-mostly bot configuration uses a small, bounded in-process TTL cache (5 seconds) with single-flight request deduplication. This reduces repeated settings and force-sub configuration reads during bursts of Telegram updates. Successful setting/channel mutations invalidate the corresponding cache immediately. Cache entries are local to each application instance, so external dashboard/database edits become visible within at most the TTL.
+
+Telegram membership checks, blocked-user tracking, premium entitlements, payment processing, and download quota reservations are not cached; those checks continue to use live Telegram/Supabase operations.
+
 ## HTTP endpoints
 
 - `/health` — basic process health
