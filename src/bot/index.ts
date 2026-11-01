@@ -31,6 +31,8 @@ let pollingLaunchGeneration = 0;
 let runtimeFailoverAttempted = false;
 let runtimeHealthTimer: ReturnType<typeof setInterval> | null = null;
 let runtimeFailoverInProgress = false;
+let runtimeHealthFailures = 0;
+let runtimeHealthCheckInProgress = false;
 setActiveBotRole(config.activeBot);
 
 const START_IMAGES_MANIFEST_URL = 'https://raw.githubusercontent.com/telebottg7-sudo/Cosplay.image/main/image/manifest.json';
@@ -3034,13 +3036,22 @@ function startRuntimeHealthMonitor(): void {
   runtimeHealthTimer = setInterval(async () => {
     const monitoredBot = botInstance;
     const monitoredRole = getStoredActiveBotRole();
-    if (!monitoredBot || (!isPollingActive && !isWebhookActive)) return;
+    if (!monitoredBot || (!isPollingActive && !isWebhookActive) || runtimeHealthCheckInProgress) return;
+    runtimeHealthCheckInProgress = true;
     try {
       await monitoredBot.telegram.getMe();
+      runtimeHealthFailures = 0;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (monitoredBot !== botInstance || monitoredRole !== getStoredActiveBotRole()) return;
-      await failoverToBackup(message);
+      runtimeHealthFailures++;
+      console.warn(`[TelegramBot] ${monitoredRole} health check failed (${runtimeHealthFailures}/2): ${message}`);
+      if (runtimeHealthFailures >= 2) {
+        runtimeHealthFailures = 0;
+        await failoverToBackup(message);
+      }
+    } finally {
+      runtimeHealthCheckInProgress = false;
     }
   }, 60_000);
   runtimeHealthTimer.unref?.();
