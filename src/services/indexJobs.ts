@@ -276,22 +276,20 @@ export async function getRecentJobs(statusFilter?: string, limit = 50): Promise<
 
 export async function countJobs(): Promise<{ queued: number; processing: number; completed: number; failed: number; total: number }> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('index_jobs')
-    .select('status');
+  const statuses = ['queued', 'processing', 'completed', 'failed'] as const;
 
-  if (error || !data) {
-    return { queued: 0, processing: 0, completed: 0, failed: 0, total: 0 };
-  }
+  // HEAD + exact count returns only aggregate metadata, not every job row.
+  const results = await Promise.all(statuses.map(async (status) => {
+    const { count, error } = await supabase
+      .from('index_jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', status);
+    if (error) throw new Error(`Failed counting ${status} jobs: ${error.message}`);
+    return count || 0;
+  }));
 
-  const counts = { queued: 0, processing: 0, completed: 0, failed: 0, total: data.length };
-  for (const row of data) {
-    if (row.status in counts) {
-      counts[row.status as keyof typeof counts]++;
-    }
-  }
-
-  return counts;
+  const [queued, processing, completed, failed] = results;
+  return { queued, processing, completed, failed, total: queued + processing + completed + failed };
 }
 
 /** Requeues jobs left in processing after a server crash or hard restart. */
