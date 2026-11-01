@@ -35,6 +35,7 @@ const baselineFiles = new Set([
   '025_delivery_analytics_aggregation.sql',
   '026_referral_leaderboard_aggregation.sql',
   '027_service_role_data_api_grants.sql',
+  '028_indexer_rpc_signature_alignment.sql',
 ]);
 
 if (entries.length === 0) errors.push('No SQL migrations were found.');
@@ -84,8 +85,8 @@ try {
 }
 
 const highestVersion = Math.max(...Array.from(versions.keys(), Number));
-if (!Number.isFinite(highestVersion) || highestVersion < 27) {
-  errors.push('Expected the repository migration baseline through version 027.');
+if (!Number.isFinite(highestVersion) || highestVersion < 28) {
+  errors.push('Expected the repository migration baseline through version 028.');
 }
 
 if (errors.length) {
