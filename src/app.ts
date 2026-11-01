@@ -6,7 +6,7 @@ import { config, validateConfig } from './config.ts';
 import { checkSupabaseConnection } from './database/supabase.ts';
 import { countVideos, searchVideos, getVideoById, toPublicVideo } from './services/videos.ts';
 import { countJobs, createIndexJob, getRecentJobs, retryJob } from './services/indexJobs.ts';
-import { countUsers, getBroadcastUserIds } from './services/users.ts';
+import { countUsers, getBroadcastRecipientPage } from './services/users.ts';
 import { javtifulProvider } from './providers/javtiful/index.ts';
 import { extractCodes, normalizeCode } from './services/code.ts';
 import { getAllSettings, setSetting } from './services/settings.ts';
@@ -596,26 +596,36 @@ export function createApp(): express.Express {
       const bot = getBot();
       if (!bot) return res.status(503).json({ ok: false, error: 'Telegram bot is not active' });
 
-      const userIds = await getBroadcastUserIds();
       let sent = 0;
       let failed = 0;
+      let total = 0;
+      let cursor: number | null = null;
       const failures: number[] = [];
 
-      for (let i = 0; i < userIds.length; i += 25) {
-        const batch = userIds.slice(i, i + 25);
-        await Promise.all(batch.map(async (userId) => {
-          try {
-            await bot.telegram.sendMessage(userId, message);
-            sent++;
-          } catch {
-            failed++;
-            if (failures.length < 50) failures.push(userId);
-          }
-        }));
-        if (i + 25 < userIds.length) await new Promise(resolve => setTimeout(resolve, 1100));
+      while (true) {
+        const page = await getBroadcastRecipientPage(cursor, 200);
+        if (!page.userIds.length) break;
+        total += page.userIds.length;
+
+        for (let i = 0; i < page.userIds.length; i += 20) {
+          const batch = page.userIds.slice(i, i + 20);
+          await Promise.all(batch.map(async (userId: number) => {
+            try {
+              await bot.telegram.sendMessage(userId, message);
+              sent++;
+            } catch {
+              failed++;
+              if (failures.length < 50) failures.push(userId);
+            }
+          }));
+          if (i + 20 < page.userIds.length) await new Promise(resolve => setTimeout(resolve, 800));
+        }
+
+        cursor = page.nextCursor;
+        if (cursor === null) break;
       }
 
-      res.json({ ok: true, total: userIds.length, sent, failed, failures });
+      res.json({ ok: true, total, sent, failed, failures });
     } catch (err: unknown) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
