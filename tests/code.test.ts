@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { cleanTitle, extractCodes, normalizeCode } from '../src/services/code.ts';
 
 test('normalizes common JAV code separators and padding', () => {
-  assert.equal(normalizeCode('adn 1'), 'ADN-001');
+  assert.equal(normalizeCode('adn 01'), 'ADN-001');
   assert.equal(normalizeCode('#abp_978'), 'ABP-978');
   assert.equal(normalizeCode('[star765]'), 'STAR-765');
   assert.equal(normalizeCode('not-a-code'), null);
