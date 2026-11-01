@@ -26,7 +26,7 @@ export function toPublicVideo(video: VideoRecord): PublicVideoRecord {
   return publicVideo;
 }
 
-export async function searchVideos(query: string, limit = 24, offset = 0): Promise<{ videos: VideoRecord[]; total: number }> {
+export async function searchVideos(query: string, limit = 24, offset = 0, includeTotal = true): Promise<{ videos: VideoRecord[]; total: number }> {
   const supabase = getSupabase();
   const trimmed = query.trim();
   const normalized = normalizeCode(trimmed);
@@ -36,7 +36,7 @@ export async function searchVideos(query: string, limit = 24, offset = 0): Promi
 
   let dbQuery = supabase
     .from('videos')
-    .select('*', { count: 'exact' })
+    .select('*', includeTotal ? { count: 'exact' } : {})
     .eq('status', 'available');
 
   if (normalized) {
@@ -60,7 +60,7 @@ export async function searchVideos(query: string, limit = 24, offset = 0): Promi
 
   return {
     videos: (data as VideoRecord[]) || [],
-    total: count || 0,
+    total: includeTotal ? (count || 0) : 0,
   };
 }
 
