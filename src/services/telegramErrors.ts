@@ -41,11 +41,15 @@ export function classifyTelegramError(error: unknown): TelegramErrorInfo {
     return { kind: 'not_modified', message: description, errorCode };
   }
 
-  if (/timeout|timed out|etimedout|econnreset|socket hang up/i.test(description)) {
+  if (errorCode >= 500 && errorCode < 600) {
+    return { kind: 'network', message: description, errorCode };
+  }
+
+  if (/timeout|timed out|etimedout|econnreset|econnaborted|socket hang up|und_err_connect_timeout/i.test(description)) {
     return { kind: 'timeout', message: description, errorCode };
   }
 
-  if (/network|enotfound|eai_again|fetch failed|connection/i.test(description)) {
+  if (/network|enotfound|eai_again|econnrefused|ehostunreach|enetunreach|epipe|fetch failed|connection/i.test(description)) {
     return { kind: 'network', message: description, errorCode };
   }
 
