@@ -20,3 +20,9 @@ test('does not retry permanent Telegram errors', () => {
   assert.equal(isRetryableTelegramError(classifyTelegramError({ response: { error_code: 400, description: 'message is too long' } })), false);
   assert.equal(isRetryableTelegramError(classifyTelegramError(new Error('ETIMEDOUT'))), true);
 });
+
+test('classifies Telegram connection resets and server errors as retryable', () => {
+  assert.equal(classifyTelegramError(new Error('read ECONNRESET')).kind, 'timeout');
+  assert.equal(classifyTelegramError(new Error('connect ENETUNREACH')).kind, 'network');
+  assert.equal(classifyTelegramError({ response: { error_code: 502, description: 'Bad Gateway' } }).kind, 'network');
+});
