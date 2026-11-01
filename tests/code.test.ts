@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanTitle, extractCodes, normalizeCode } from '../src/services/code.ts';
+import { cleanTitle, extractCodes, extractVideoIdFromStartPayload, normalizeCode } from '../src/services/code.ts';
 
 test('normalizes common JAV code separators and padding', () => {
   assert.equal(normalizeCode('adn 01'), 'ADN-001');
@@ -17,4 +17,14 @@ test('extracts unique normalized codes from captions', () => {
 test('removes a leading code from a title without losing the remaining title', () => {
   assert.equal(cleanTitle('ADN-001 - Sample title', 'ADN-001'), 'Sample title');
   assert.equal(cleanTitle('', 'ADN-001'), 'ADN-001');
+});
+
+test('extracts UUID and legacy numeric video IDs from website start payloads', () => {
+  assert.equal(
+    extractVideoIdFromStartPayload('v_e98a7050-8e14-4947-8ebd-dd463122454d'),
+    'e98a7050-8e14-4947-8ebd-dd463122454d',
+  );
+  assert.equal(extractVideoIdFromStartPayload('v_12345'), '12345');
+  assert.equal(extractVideoIdFromStartPayload('ADN-001'), null);
+  assert.equal(extractVideoIdFromStartPayload('v_not-a-valid-id'), null);
 });
