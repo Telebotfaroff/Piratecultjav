@@ -33,8 +33,8 @@ for (const [version, names] of versions) {
 }
 
 const highestVersion = Math.max(...Array.from(versions.keys(), Number));
-if (!Number.isFinite(highestVersion) || highestVersion < 26) {
-  errors.push('Expected the repository migration baseline through version 026.');
+if (!Number.isFinite(highestVersion) || highestVersion < 27) {
+  errors.push('Expected the repository migration baseline through version 027.');
 }
 
 if (errors.length) {
@@ -43,5 +43,5 @@ if (errors.length) {
   process.exitCode = 1;
 } else {
   console.log(`Verified ${entries.length} SQL migration files (latest version: ${String(highestVersion).padStart(3, '0')}).`);
-  console.log('New migrations must use a unique numeric version greater than 026.');
+  console.log('New migrations must use a unique numeric version greater than 027.');
 }
