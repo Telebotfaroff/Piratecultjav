@@ -1,5 +1,5 @@
 import { getSupabase } from '../database/supabase.ts';
-import { getSetting } from './settings.ts';
+import { getSetting, setSetting } from './settings.ts';
 
 export interface UserRecord {
   id: string;
@@ -128,14 +128,7 @@ export async function getDownloadQuotaSettings(): Promise<DownloadQuotaSettings>
 }
 
 export async function setDownloadQuotaSettings(settings: DownloadQuotaSettings): Promise<void> {
-  const supabase = getSupabase();
-  const payload = {
-    key: 'download_quotas',
-    value: settings,
-    updated_at: new Date().toISOString(),
-  };
-  const { error } = await supabase.from('bot_settings').upsert(payload, { onConflict: 'key' });
-  if (error) throw new Error(`Failed saving download quotas: ${error.message}`);
+  await setSetting('download_quotas', settings);
 }
 
 export interface DownloadAllowance {
