@@ -23,9 +23,18 @@ DECLARE
   table_record RECORD;
 BEGIN
   FOR table_record IN
-    SELECT tablename
-      FROM pg_catalog.pg_tables
-     WHERE schemaname = 'public'
+    SELECT c.relname AS tablename
+      FROM pg_catalog.pg_class AS c
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public'
+       AND c.relkind IN ('r', 'p')
+       AND NOT EXISTS (
+         SELECT 1
+           FROM pg_catalog.pg_depend AS d
+          WHERE d.classid = 'pg_catalog.pg_class'::regclass
+            AND d.objid = c.oid
+            AND d.deptype = 'e'
+       )
   LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', table_record.tablename);
   END LOOP;
@@ -35,10 +44,14 @@ $$;
 -- Apply the same access model to future objects created by Supabase migrations
 -- (which run as postgres in the standard Supabase migration workflow).
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE ALL PRIVILEGES ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT ALL PRIVILEGES ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE ALL PRIVILEGES ON SEQUENCES FROM anon, authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO service_role;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT EXECUTE ON FUNCTIONS TO service_role;
