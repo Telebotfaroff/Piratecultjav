@@ -5,6 +5,7 @@ import { config } from './src/config.ts';
 import { indexerWorker } from './src/workers/indexer.ts';
 import { startBotPolling, stopBotRuntime } from './src/bot/index.ts';
 import { runDatabaseMigrations } from './src/database/migrate.ts';
+import { historicalIndexerProcess } from './src/workers/historicalIndexerProcess.ts';
 
 async function startServer() {
   let pollingRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -82,6 +83,8 @@ async function startServer() {
 
   // Start background services
   indexerWorker.start();
+  // The optional Pyrogram worker runs as a supervised child process in this same Render service.
+  historicalIndexerProcess.start();
   
   const httpServer = app.listen(port, '0.0.0.0', () => {
     console.log(`[PiratecultJAV] Server running on http://0.0.0.0:${port}`);
@@ -125,6 +128,7 @@ async function startServer() {
     await Promise.allSettled([
       stopBotRuntime(),
       indexerWorker.stop(),
+      historicalIndexerProcess.stop(),
       httpClosed,
     ]);
 
