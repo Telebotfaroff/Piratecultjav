@@ -1268,14 +1268,14 @@ deliveryBot?.command('start', async (ctx) => {
   async function showHistoricalIndexer(ctx: any, edit = true) {
     const status = await getHistoricalIndexerStatus();
     const text =
-      '🕘 <b>HISTORICAL INDEXER</b>\\n━━━━━━━━━━━━━━━━━━━━\\n\\n' +
-      '⚙️ Control: <b>' + (status.enabled ? '🟢 ENABLED' : '⏸ PAUSED') + '</b>\\n\\n' +
-      '⏳ Queued: <b>' + status.queued + '</b>\\n' +
-      '🔄 Running: <b>' + status.running + '</b>\\n' +
-      '⏸ Paused: <b>' + status.paused + '</b>\\n' +
-      '✅ Completed: <b>' + status.completed + '</b>\\n' +
-      '❌ Failed: <b>' + status.failed + '</b>\\n' +
-      '📦 Total: <b>' + status.total + '</b>\\n\\n' +
+      '🕘 <b>HISTORICAL INDEXER</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
+      '⚙️ Control: <b>' + (status.enabled ? '🟢 ENABLED' : '⏸ PAUSED') + '</b>\n\n' +
+      '⏳ Queued: <b>' + status.queued + '</b>\n' +
+      '🔄 Running: <b>' + status.running + '</b>\n' +
+      '⏸ Paused: <b>' + status.paused + '</b>\n' +
+      '✅ Completed: <b>' + status.completed + '</b>\n' +
+      '❌ Failed: <b>' + status.failed + '</b>\n' +
+      '📦 Total: <b>' + status.total + '</b>\n\n' +
       '<i>Use the controls below to manage historical indexing.</i>';
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('▶️ Start', 'admin:history:start'), Markup.button.callback('⏸ Pause', 'admin:history:pause')],
