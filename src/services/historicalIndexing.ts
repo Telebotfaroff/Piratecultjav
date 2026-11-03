@@ -78,6 +78,36 @@ export async function listHistoricalSources(limit = 10): Promise<HistoricalSourc
   return (data || []) as HistoricalSource[];
 }
 
+export async function enqueueExistingHistoricalSource(sourceId: string, requestedBy: number): Promise<{ source: HistoricalSource; jobId: number; alreadyQueued: boolean }> {
+  const supabase = getSupabase();
+  const { data: sourceData, error: sourceError } = await supabase
+    .from('index_sources')
+    .select('id, source_chat_id, source_username, title, is_active')
+    .eq('id', sourceId)
+    .single();
+  if (sourceError || !sourceData) throw new Error(`Could not load selected source: ${sourceError?.message || 'not found'}`);
+  const source = sourceData as HistoricalSource;
+  if (!source.is_active) {
+    const { error } = await supabase.from('index_sources').update({ is_active: true }).eq('id', source.id);
+    if (error) throw new Error(`Could not activate source: ${error.message}`);
+    source.is_active = true;
+  }
+  const { data: activeJob, error: activeError } = await supabase
+    .from('historical_index_jobs').select('id')
+    .eq('source_id', source.id).in('status', ['queued', 'running', 'paused'])
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (activeError) throw new Error(`Could not check active jobs: ${activeError.message}`);
+  if (activeJob) return { source, jobId: Number(activeJob.id), alreadyQueued: true };
+  const { data: job, error: jobError } = await supabase
+    .from('historical_index_jobs')
+    .insert({
+      source_id: source.id, source_chat_id: source.source_chat_id, status: 'queued',
+      media_mode: 'all', start_message_id: null, end_message_id: null, requested_by: requestedBy,
+    }).select('id').single();
+  if (jobError) throw new Error(`Could not queue selected source: ${jobError.message}`);
+  return { source, jobId: Number(job.id), alreadyQueued: false };
+}
+
 export async function enqueueHistoricalSource(input: string, requestedBy: number): Promise<{ source: HistoricalSource; jobId: number; alreadyQueued: boolean }> {
   const supabase = getSupabase();
   const raw = input.trim();
