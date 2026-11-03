@@ -276,13 +276,9 @@ class HistoricalIndexer:
                 message_date = as_utc_datetime(message.date)
                 start_date = as_utc_datetime(job["start_date"])
                 end_date = as_utc_datetime(job["end_date"])
-                if message_date is None:
-                    scanned += 1
-                    last_message_id = message.id
-                    skipped += 1
-                elif start_date and message_date < start_date:
+                if message_date is not None and start_date and message_date < start_date:
                     break
-                elif end_date and message_date > end_date:
+                if message_date is not None and end_date and message_date > end_date:
                     last_message_id = message.id
                     scanned += 1
                     pending += 1
