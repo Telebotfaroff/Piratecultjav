@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 
-const REQUIRED_ENV = ['DATABASE_URL', 'API_ID', 'API_HASH', 'SESSION_ENCRYPTION_KEY'] as const;
+const REQUIRED_ENV = ['DATABASE_URL', 'API_ID', 'API_HASH'] as const;
 
 export class HistoricalIndexerProcess {
   private child: ChildProcess | null = null;
@@ -15,7 +15,11 @@ export class HistoricalIndexerProcess {
       return;
     }
 
+    const hasEnvironmentSession = Boolean(process.env.PYROGRAM_SESSION_STRING?.trim());
     const missing = REQUIRED_ENV.filter((key) => !process.env[key]?.trim());
+    if (!hasEnvironmentSession && !process.env.SESSION_ENCRYPTION_KEY?.trim()) {
+      missing.push('PYROGRAM_SESSION_STRING (or SESSION_ENCRYPTION_KEY with an encrypted Supabase session)');
+    }
     if (missing.length) {
       console.log(
         `[HistoricalIndexer] Not started; configure ${missing.join(', ')} to enable the Pyrogram worker.`,
