@@ -359,7 +359,8 @@ export function createApp(): express.Express {
       if (!code) return res.status(400).json({ ok: false, error: 'Invalid video code' });
 
       const images = await getScreenshotImagesByCode(code, 60);
-      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+      // Screenshot metadata changes infrequently; image bytes are cached separately for much longer.
+      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600, stale-while-revalidate=600');
       return res.json({
         ok: true,
         code,
@@ -420,7 +421,7 @@ export function createApp(): express.Express {
 
       res.setHeader('Content-Type', contentType);
       res.setHeader('Content-Length', String(bytes.length));
-      res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+      res.setHeader('Cache-Control', 'public, max-age=2592000, s-maxage=2592000, stale-while-revalidate=604800');
       res.setHeader('X-Content-Type-Options', 'nosniff');
       return res.status(200).send(bytes);
     } catch (err: unknown) {
@@ -467,7 +468,8 @@ export function createApp(): express.Express {
         || (req.query.includeTotal !== 'false' && offset === 0);
 
       const result = await searchVideos(query, limit, offset, includeTotal);
-      res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=30');
+      // Public catalog data changes as indexing completes; keep a short browser/CDN cache.
+      res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=120');
       const payload: { ok: boolean; videos: ReturnType<typeof toPublicVideo>[]; total?: number } = {
         ok: true,
         videos: result.videos.map(toPublicVideo),
@@ -584,7 +586,7 @@ export function createApp(): express.Express {
       }
 
       res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800');
+      res.setHeader('Cache-Control', 'public, max-age=2592000, s-maxage=2592000, stale-while-revalidate=604800');
       res.setHeader('X-Content-Type-Options', 'nosniff');
       return res.send(Buffer.from(body));
     } catch (err: unknown) {
