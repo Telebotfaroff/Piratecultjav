@@ -81,7 +81,10 @@ export async function listHistoricalSources(limit = 10): Promise<HistoricalSourc
 export async function enqueueHistoricalSource(input: string, requestedBy: number): Promise<{ source: HistoricalSource; jobId: number; alreadyQueued: boolean }> {
   const supabase = getSupabase();
   const raw = input.trim();
-  const username = raw.replace(/^https?:\/\/(?:www\.)?t\.me\//i, '').replace(/^@/, '').replace(/\/+$/, '');
+  let candidate = raw.trim();
+  candidate = candidate.replace(/^https?:/i, '').replace(/^\\/\\//, '');
+  candidate = candidate.replace(/^www\\.t\\.me\\//i, '').replace(/^t\\.me\\//i, '');
+  const username = candidate.replace(/^@/, '').split('/')[0];
   const isUsername = /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(username) && !/^-?\\d+$/.test(username);
   const sourceChatId = isUsername ? username : raw;
   if (!isUsername && !/^-100\\d{5,}$/.test(sourceChatId)) {
