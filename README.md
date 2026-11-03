@@ -29,10 +29,7 @@ PORT=3000
 # Set TRUST_PROXY_HOPS only when your deployment has a different known proxy chain.
 # TRUST_PROXY_HOPS=1
 
-# Recommended on Render: set both to enable Telegram webhook mode
-WEBHOOK_URL=https://piratecultjav.onrender.com
-WEBHOOK_SECRET=generate-a-strong-random-secret
-WEBHOOK_PATH=/telegram-webhook
+# Telegram uses long polling by default; WEBHOOK_* variables are not required.
 ```
 
 Keep `.env` out of version control. Never expose bot tokens or the Supabase secret key in browser code. `ADMIN_API_KEY` must be a unique random value with at least 32 characters; the service rejects missing, short, or example keys.
@@ -87,9 +84,9 @@ Each worker slot has a unique owner ID. Jobs are claimed with PostgreSQL `FOR UP
 
 ## Runtime resilience and graceful shutdown
 
-When both `BOT_TOKEN` and `BACKUP_BOT_TOKEN` are configured, startup validates the selected bot and can fall back to the other token if validation fails. During polling, a runtime launch failure on the primary bot triggers one automatic switch to the backup bot per process. Webhook and polling modes also run a Telegram token-health check every 60 seconds; two consecutive failures can trigger the same one-time primary-to-backup switch. The backup bot must be an administrator in the dump channel and have the same required channel permissions. Keep the primary and backup bot tokens separate and rotate them independently.
+Telegram long polling is the default transport in every environment, including Render. The service clears any existing webhook before starting polling, so Telegram updates are received through `getUpdates`. When both `BOT_TOKEN` and `BACKUP_BOT_TOKEN` are configured, startup validates the selected bot and can fall back to the other token if validation fails. A runtime launch failure on the primary bot triggers one automatic switch to the backup bot per process. Polling also runs a Telegram token-health check every 60 seconds; two consecutive failures can trigger the same one-time primary-to-backup switch. The backup bot must be an administrator in the dump channel and have the same required channel permissions. Keep the primary and backup bot tokens separate and rotate them independently.
 
-On `SIGTERM` or `SIGINT`, the server stops accepting new HTTP connections, removes the active webhook or stops polling, and asks the indexer to finish its claimed jobs before exiting. The shutdown has a 15-second hard timeout; jobs that cannot finish are recovered later through their expired leases.
+On `SIGTERM` or `SIGINT`, the server stops accepting new HTTP connections, stops Telegram polling, and asks the indexer to finish its claimed jobs before exiting. The shutdown has a 15-second hard timeout; jobs that cannot finish are recovered later through their expired leases.
 
 A runtime failover is intentionally one-way and limited to one attempt per process to avoid flapping. After correcting the primary bot issue, restart the service or manually switch back from the admin controls.
 
@@ -160,6 +157,5 @@ sudo systemctl restart telegram-bot-service
 - Keep secrets in environment variables.
 - Use HTTPS when exposing the service publicly.
 - Keep Node.js and dependencies updated.
-- On Render, configure `WEBHOOK_URL`, `WEBHOOK_SECRET`, and optionally `WEBHOOK_PATH` to enable Telegram webhook mode. The webhook endpoint defaults to `/telegram-webhook`.
-- If webhook variables are absent, the service retains polling mode for local/development compatibility. Do not run polling and webhook mode simultaneously for the same bot token.
+- Telegram long polling is always used by default. Remove any old `WEBHOOK_URL` and `WEBHOOK_SECRET` values from Render to keep the environment configuration clean; they are ignored by the startup entry point.
 - Monitor the readiness endpoint and application logs after deployment.
