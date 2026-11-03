@@ -67,7 +67,11 @@ def media_details(message: Message, allowed: set[str]) -> dict[str, Any] | None:
             "mime_type": getattr(item, "mime_type", None),
             "file_size": getattr(item, "file_size", None),
             "media_group_id": message.media_group_id,
-            "message_date": message.date,
+            "message_date": (
+                message.date.replace(tzinfo=timezone.utc)
+                if message.date and message.date.tzinfo is None
+                else message.date
+            ),
             "metadata": {
                 "has_caption": bool(caption),
                 "message_id": message.id,
@@ -356,9 +360,9 @@ class HistoricalIndexer:
         )
 
     async def run(self) -> None:
-        await self.start()
-        LOG.info("Historical indexer worker ready | worker_id=%s", self.worker_id)
         try:
+            await self.start()
+            LOG.info("Historical indexer worker ready | worker_id=%s", self.worker_id)
             while not self.stop_event.is_set():
                 job = await self.claim_job()
                 if job:
