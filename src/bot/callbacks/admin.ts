@@ -116,14 +116,14 @@ export function registerAdminCallbacks(bot: Telegraf) {
     const status = await getHistoricalIndexerStatus();
     const enabled = status.enabled;
     const body =
-      '🕘 <b>Historical Indexer</b>\\n\\n' +
-      'Control: <b>' + (enabled ? '🟢 RUNNING / ENABLED' : '⏸ PAUSED') + '</b>\\n\\n' +
-      '⏳ Queued: <b>' + status.queued + '</b>\\n' +
-      '🔄 Running: <b>' + status.running + '</b>\\n' +
-      '⏸ Paused: <b>' + status.paused + '</b>\\n' +
-      '✅ Completed: <b>' + status.completed + '</b>\\n' +
-      '❌ Failed: <b>' + status.failed + '</b>\\n' +
-      '📦 Total: <b>' + status.total + '</b>\\n\\n' +
+      '🕘 <b>Historical Indexer</b>\n\n' +
+      'Control: <b>' + (enabled ? '🟢 RUNNING / ENABLED' : '⏸ PAUSED') + '</b>\n\n' +
+      '⏳ Queued: <b>' + status.queued + '</b>\n' +
+      '🔄 Running: <b>' + status.running + '</b>\n' +
+      '⏸ Paused: <b>' + status.paused + '</b>\n' +
+      '✅ Completed: <b>' + status.completed + '</b>\n' +
+      '❌ Failed: <b>' + status.failed + '</b>\n' +
+      '📦 Total: <b>' + status.total + '</b>\n\n' +
       'The worker checks this control every few seconds. Pause takes effect at the next batch checkpoint.';
     return ctx.editMessageText(body, {
       parse_mode: 'HTML',
