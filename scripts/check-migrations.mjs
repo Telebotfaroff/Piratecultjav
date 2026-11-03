@@ -36,6 +36,7 @@ const baselineFiles = new Set([
   '026_referral_leaderboard_aggregation.sql',
   '027_service_role_data_api_grants.sql',
   '028_indexer_rpc_signature_alignment.sql',
+  '029_v2_historical_indexing_foundation.sql',
 ]);
 
 if (entries.length === 0) errors.push('No SQL migrations were found.');
@@ -47,8 +48,8 @@ for (const name of entries) {
     continue;
   }
   const [, version] = match;
-  if (!baselineFiles.has(name) && Number(version) <= 27) {
-    errors.push(`New migration must use a version greater than 027: ${name}`);
+  if (!baselineFiles.has(name) && Number(version) <= 28) {
+    errors.push(`New migration must use a version greater than 028: ${name}`);
   }
   const paths = versions.get(version) || [];
   paths.push(name);
