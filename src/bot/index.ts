@@ -19,7 +19,7 @@ import { deliverVideoToUser, downloadAllSearchResults, showAdminVideoEditMenu, s
 import { registerPaymentEvents } from './events/payments.ts';
 import { getActiveBotRole as getStoredActiveBotRole, setActiveBotRole } from './state.ts';
 import { getPremiumPackages, savePremiumPackage, removePremiumPackage, togglePremiumPackage, sendPremiumStore, sendPremiumInvoice } from './premium.ts';
-import { getHistoricalIndexerStatus, startHistoricalIndexer, pauseHistoricalIndexer, resumeHistoricalIndexer } from '../services/historicalIndexing.ts';
+import { getHistoricalIndexerStatus, startHistoricalIndexer, pauseHistoricalIndexer, resumeHistoricalIndexer, enqueueHistoricalSource, listHistoricalSources } from '../services/historicalIndexing.ts';
 import { registerTelegramErrorHandler } from './middleware/errorHandler.ts';
 import { registerUserTrackingMiddleware } from './middleware/userTracking.ts';
 
@@ -1266,18 +1266,20 @@ deliveryBot?.command('start', async (ctx) => {
   });
 
   async function showHistoricalIndexer(ctx: any, edit = true) {
-    const status = await getHistoricalIndexerStatus();
+    const [status, sources] = await Promise.all([getHistoricalIndexerStatus(), listHistoricalSources(8)]);
+    const sourceLines = sources.length
+      ? sources.map((source, index) => `${index + 1}. ${escapeHtml(source.title || source.source_username || source.source_chat_id)} · ${source.is_active ? 'Active' : 'Off'}`)
+      : ['No source channels added yet.'];
     const text =
-      '🕘 <b>HISTORICAL INDEXER</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
-      '⚙️ Control: <b>' + (status.enabled ? '🟢 ENABLED' : '⏸ PAUSED') + '</b>\n\n' +
-      '⏳ Queued: <b>' + status.queued + '</b>\n' +
-      '🔄 Running: <b>' + status.running + '</b>\n' +
-      '⏸ Paused: <b>' + status.paused + '</b>\n' +
-      '✅ Completed: <b>' + status.completed + '</b>\n' +
-      '❌ Failed: <b>' + status.failed + '</b>\n' +
-      '📦 Total: <b>' + status.total + '</b>\n\n' +
-      '<i>Use the controls below to manage historical indexing.</i>';
+      '🕘 <b>HISTORICAL INDEXER</b>\\n━━━━━━━━━━━━━━━━━━━━\\n\\n' +
+      '⚙️ Control: <b>' + (status.enabled ? '🟢 ENABLED' : '⏸ PAUSED') + '</b>\\n' +
+      '⏳ Queued: <b>' + status.queued + '</b> · 🔄 Running: <b>' + status.running + '</b>\\n' +
+      '⏸ Paused: <b>' + status.paused + '</b> · ❌ Failed: <b>' + status.failed + '</b>\\n' +
+      '✅ Completed: <b>' + status.completed + '</b> · 📦 Total: <b>' + status.total + '</b>\\n\\n' +
+      '<b>Source channels</b>\\n' + sourceLines.join('\\n') + '\\n\\n' +
+      '<i>New sources are scanned from the latest message through all available history.</i>';
     const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('➕ Add Channel', 'admin:history:add'), Markup.button.callback('📋 Sources', 'admin:history:sources')],
       [Markup.button.callback('▶️ Start', 'admin:history:start'), Markup.button.callback('⏸ Pause', 'admin:history:pause')],
       [Markup.button.callback('⏯ Resume paused', 'admin:history:resume')],
       [Markup.button.callback('🔄 Refresh', 'admin:history'), Markup.button.callback('⬅️ Admin Center', 'settings:main')],
@@ -1329,6 +1331,29 @@ deliveryBot?.command('start', async (ctx) => {
     } catch (error) {
       return ctx.reply('❌ Could not resume indexer: ' + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: 'HTML' });
     }
+  });
+
+  controllerBot.action('admin:history:add', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
+    await setAdminSession(ctx.from!.id, 'historical_source_add', 'awaiting_channel');
+    await ctx.answerCbQuery();
+    return ctx.reply(
+      '➕ <b>Add Historical Source</b>\\n\\nSend a public channel as <code>@username</code> or <code>https://t.me/username</code>, or send its numeric ID (for example <code>-1001234567890</code>).\\n\\nThe worker will scan <b>all available messages</b>, newest to oldest. The Pyrogram account must already have access to the channel.\\n\\nSend /cancel to stop.',
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin:history:add:cancel')]]) },
+    );
+  });
+
+  controllerBot.action('admin:history:add:cancel', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
+    await clearAdminSession(ctx.from!.id);
+    await ctx.answerCbQuery('Cancelled.');
+    return showHistoricalIndexer(ctx, false);
+  });
+
+  controllerBot.action('admin:history:sources', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
+    await ctx.answerCbQuery();
+    return showHistoricalIndexer(ctx);
   });
 
   controllerBot.action('admin:history', async (ctx) => {
@@ -2801,6 +2826,28 @@ deliveryBot?.command('start', async (ctx) => {
         return ctx.reply('❌ I could not identify a channel. Send a numeric channel ID (for example <code>-1001234567890</code>) or forward a channel post. Send /cancel to stop.', { parse_mode: 'HTML' });
       }
       return configureNotificationChannel(ctx, type, channelId);
+    }
+
+    if (session.action === 'historical_source_add' && session.step === 'awaiting_channel' && 'text' in ctx.message) {
+      const input = ctx.message.text.trim();
+      if (input === '/cancel') {
+        await clearAdminSession(ctx.from.id);
+        return ctx.reply('Historical source setup cancelled.');
+      }
+      try {
+        const result = await enqueueHistoricalSource(input, ctx.from.id);
+        await clearAdminSession(ctx.from.id);
+        await startHistoricalIndexer();
+        const label = escapeHtml(result.source.title || result.source.source_username || result.source.source_chat_id);
+        await ctx.reply(
+          (result.alreadyQueued ? 'ℹ️ This source already has an active job.' : '✅ Historical indexing job queued.') +
+          '\\n\\n📡 Source: <b>' + label + '</b>\\n🆔 Job: <code>#' + result.jobId + '</code>\\n📚 Range: <b>All available messages</b>\\n\\nThe worker will validate channel access and begin scanning.',
+          { parse_mode: 'HTML' },
+        );
+        return showHistoricalIndexer(ctx, false);
+      } catch (error) {
+        return ctx.reply('❌ Could not add source: ' + escapeHtml(error instanceof Error ? error.message : String(error)) + '\\n\\nTry again or send /cancel.', { parse_mode: 'HTML' });
+      }
     }
 
     if (session.action === 'promo_create' && 'text' in ctx.message) {
