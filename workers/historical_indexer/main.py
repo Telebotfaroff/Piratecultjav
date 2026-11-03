@@ -133,7 +133,7 @@ class HistoricalIndexer:
             min_size=1,
             max_size=4,
             command_timeout=30,
-            ssl=os.environ.get("DATABASE_SSL", "true").lower() != "false",
+            ssl="require" if os.environ.get("DATABASE_SSL", "require").strip().lower() not in {"false", "disable", "disabled"} else False,
         )
         # Avoid the Supabase secret lookup entirely when Render supplies a session.
         # The environment variable always takes priority over the encrypted fallback.
