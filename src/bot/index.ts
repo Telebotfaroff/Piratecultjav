@@ -26,6 +26,7 @@ let controllerBotInstance: Telegraf | null = null;
 let deliveryBotInstance: Telegraf | null = null;
 let isPollingActive = false;
 let isDeliveryBotActive = false;
+let isDeliveryBotConfigured = false;
 let isWebhookActive = false;
 let activeTransportMode: 'webhook' | 'polling' | 'offline' = 'offline';
 let webhookApp: Express | null = null;
@@ -3155,6 +3156,7 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
   try {
     controllerBotInstance = new Telegraf(controllerToken);
     const deliveryToken = await getSetting<string>('delivery_bot_token', '');
+    isDeliveryBotConfigured = Boolean(deliveryToken);
     deliveryBotInstance = deliveryToken ? new Telegraf(deliveryToken) : null;
     if (!deliveryBotInstance) {
       console.warn('[TelegramBot] No delivery bot token configured. Public commands will be unavailable.');
@@ -3200,6 +3202,7 @@ export async function startBotPolling(): Promise<boolean> {
   }
 
   const deliveryToken = await getSetting<string>('delivery_bot_token', '');
+  isDeliveryBotConfigured = Boolean(deliveryToken);
   const preferredRole = getStoredActiveBotRole();
   const roles: Array<'primary' | 'backup'> = [
     preferredRole,
@@ -3330,7 +3333,7 @@ export function getBotRuntimeStatus(): {
     active: isPollingActive || isWebhookActive,
     controllerActive: isPollingActive || isWebhookActive,
     deliveryActive: isDeliveryBotActive || (isWebhookActive && Boolean(deliveryBotInstance)),
-    deliveryConfigured: Boolean(deliveryBotInstance),
+    deliveryConfigured: isDeliveryBotConfigured,
     mode: activeTransportMode,
     fallback: runtimeFailoverAttempted,
   };
