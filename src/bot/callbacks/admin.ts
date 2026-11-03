@@ -1,4 +1,4 @@
-import { Telegraf } from 'telegraf';
+import { Telegraf, type Context } from 'telegraf';
 import { getActiveBotRole } from '../index.ts';
 import { botDeps } from '../deps.ts';
 import { getHistoricalIndexerStatus, startHistoricalIndexer, pauseHistoricalIndexer, resumeHistoricalIndexer } from '../../services/historicalIndexing.ts';
@@ -112,7 +112,7 @@ export function registerAdminCallbacks(bot: Telegraf) {
       );
     });
 
-  const showHistoricalIndexer = async (ctx: Parameters<Parameters<Telegraf['action']>[1]>[0]) => {
+  const showHistoricalIndexer = async (ctx: Context) => {
     const status = await getHistoricalIndexerStatus();
     const enabled = status.enabled;
     const body =
