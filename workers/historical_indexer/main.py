@@ -282,21 +282,20 @@ class HistoricalIndexer:
     async def process_job(self, job: asyncpg.Record) -> None:
         assert self.client and self.pool
         job_id = job["id"]
-        source_chat = await self.client.get_chat(job["source_chat_id"])
-        canonical_source_chat_id = str(source_chat.id)
         source_chat_id = job["source_chat_id"]
-        allowed = set(json_list(job["media_filters"], list(MEDIA_ATTRIBUTES)))
-        if job["media_mode"] == "all":
-            allowed = set(MEDIA_ATTRIBUTES)
         cursor = int(job["last_processed_message_id"] or 0)
         if cursor == 0 and job["end_message_id"]:
             cursor = int(job["end_message_id"]) + 1
-
         scanned = indexed = duplicates = skipped = failed = pending = 0
         last_message_id = cursor
-        LOG.info("Historical job started | job_id=%s | source=%s", job_id, source_chat_id)
 
         try:
+            source_chat = await self.client.get_chat(source_chat_id)
+            canonical_source_chat_id = str(source_chat.id)
+            allowed = set(json_list(job["media_filters"], list(MEDIA_ATTRIBUTES)))
+            if job["media_mode"] == "all":
+                allowed = set(MEDIA_ATTRIBUTES)
+            LOG.info("Historical job started | job_id=%s | source=%s", job_id, source_chat_id)
             async for message in self.client.get_chat_history(
                 source_chat_id, limit=0, offset_id=cursor
             ):
@@ -366,7 +365,28 @@ class HistoricalIndexer:
             LOG.info("Historical job completed | job_id=%s", job_id)
         except Exception as exc:
             LOG.exception("Historical job failed | job_id=%s", job_id)
-            await self.fail_job(job_id, str(exc)[:2000])
+            error_text = str(exc)[:2000]
+            await self.fail_job(job_id, error_text)
+            await self.notify_admins(
+                f"❌ Historical indexing failed\\nJob: #{job_id}\\nSource: {source_chat_id}\\nError: {error_text[:1200]}"
+            )
+
+    async def notify_admins(self, message: str) -> None:
+        if not self.client:
+            return
+        chat_ids = [
+            value.strip()
+            for value in os.environ.get("HISTORICAL_INDEXER_NOTIFY_CHAT_IDS", "").split(",")
+            if value.strip()
+        ]
+        if not chat_ids:
+            LOG.warning("Historical failure notification skipped: HISTORICAL_INDEXER_NOTIFY_CHAT_IDS is empty")
+            return
+        for chat_id in chat_ids:
+            try:
+                await self.client.send_message(chat_id, message, disable_web_page_preview=True)
+            except Exception:
+                LOG.exception("Could not send historical indexer notification | chat_id=%s", chat_id)
 
     async def release_job(self, job_id: int) -> None:
         assert self.pool
