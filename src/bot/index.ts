@@ -25,6 +25,7 @@ import { registerUserTrackingMiddleware } from './middleware/userTracking.ts';
 let controllerBotInstance: Telegraf | null = null;
 let deliveryBotInstance: Telegraf | null = null;
 let isPollingActive = false;
+let isDeliveryBotActive = false;
 let isWebhookActive = false;
 let activeTransportMode: 'webhook' | 'polling' | 'offline' = 'offline';
 let webhookApp: Express | null = null;
@@ -3223,17 +3224,30 @@ export async function startBotPolling(): Promise<boolean> {
         await deliveryBotInstance.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
       }
 
+      // The controller is the control plane: launch and verify it independently.
+      // A delivery bot outage must never tear down a healthy controller.
       await controllerBotInstance.launch({ dropPendingUpdates: false });
-      if (deliveryBotInstance) {
-        await deliveryBotInstance.launch({ dropPendingUpdates: false });
-      }
-
-      setActiveBotRole(role);
-      runtimeFailoverAttempted = role !== preferredRole;
       isPollingActive = true;
       isWebhookActive = false;
       activeTransportMode = 'polling';
-      console.log(`[TelegramBot] Long polling started. Controller role=${role}, fallback=${runtimeFailoverAttempted}.`);
+
+      setActiveBotRole(role);
+      runtimeFailoverAttempted = role !== preferredRole;
+      console.log(`[TelegramBot] Controller long polling started | role=${role} | fallback=${runtimeFailoverAttempted}.`);
+
+      if (deliveryBotInstance) {
+        try {
+          await deliveryBotInstance.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
+          await deliveryBotInstance.launch({ dropPendingUpdates: false });
+          isDeliveryBotActive = true;
+          console.log('[TelegramBot] Delivery bot long polling started.');
+        } catch (deliveryError) {
+          console.error('[TelegramBot] Delivery bot failed to start; controller remains online:', deliveryError);
+          try { deliveryBotInstance.stop('Delivery bot startup failed'); } catch {}
+          deliveryBotInstance = null;
+          isDeliveryBotActive = false;
+        }
+      }
       return true;
     } catch (err) {
       lastError = err;
@@ -3290,6 +3304,7 @@ export function stopBotPolling(): void {
     try { deliveryBotInstance.stop('Stopping delivery bot'); } catch {}
   }
   isPollingActive = false;
+  isDeliveryBotActive = false;
   isWebhookActive = false;
   activeTransportMode = 'offline';
   controllerBotInstance = null;
@@ -3303,8 +3318,23 @@ export async function stopBotRuntime(): Promise<void> {
   console.log('[TelegramBot] Runtime stopped.');
 }
 
-export function getBotRuntimeStatus(): { active: boolean; mode: 'webhook' | 'polling' | 'offline'; fallback: boolean } {
-  return { active: isPollingActive || isWebhookActive, mode: activeTransportMode, fallback: runtimeFailoverAttempted };
+export function getBotRuntimeStatus(): {
+  active: boolean;
+  controllerActive: boolean;
+  deliveryActive: boolean;
+  deliveryConfigured: boolean;
+  mode: 'webhook' | 'polling' | 'offline';
+  fallback: boolean;
+} {
+  return {
+    active: isPollingActive || isWebhookActive,
+    controllerActive: isPollingActive || isWebhookActive,
+    deliveryActive: isDeliveryBotActive || (isWebhookActive && Boolean(deliveryBotInstance)),
+    deliveryConfigured: Boolean(deliveryBotInstance),
+    mode: activeTransportMode,
+    fallback: runtimeFailoverAttempted,
+  };
 }
 
+// The controller is the runtime's critical control plane. Delivery status is reported separately.
 export function isBotActive(): boolean { return isPollingActive || isWebhookActive; }
