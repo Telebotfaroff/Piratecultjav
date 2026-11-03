@@ -1282,7 +1282,16 @@ deliveryBot?.command('start', async (ctx) => {
       [Markup.button.callback('⏯ Resume paused', 'admin:history:resume')],
       [Markup.button.callback('🔄 Refresh', 'admin:history'), Markup.button.callback('⬅️ Admin Center', 'settings:main')],
     ]);
-    if (edit && ctx.callbackQuery) return ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
+    if (edit && ctx.callbackQuery) {
+      try {
+        return await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
+      } catch (error) {
+        // Telegram returns 400 when the screen already has identical text and buttons.
+        // Treat this as a successful no-op so Refresh does not show a false error.
+        if (error instanceof Error && /message is not modified/i.test(error.message)) return;
+        throw error;
+      }
+    }
     return ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
   }
 
