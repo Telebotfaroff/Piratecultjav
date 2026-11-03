@@ -19,7 +19,7 @@ import { deliverVideoToUser, downloadAllSearchResults, showAdminVideoEditMenu, s
 import { registerPaymentEvents } from './events/payments.ts';
 import { getActiveBotRole as getStoredActiveBotRole, setActiveBotRole } from './state.ts';
 import { getPremiumPackages, savePremiumPackage, removePremiumPackage, togglePremiumPackage, sendPremiumStore, sendPremiumInvoice } from './premium.ts';
-import { getHistoricalIndexerStatus, startHistoricalIndexer, pauseHistoricalIndexer, resumeHistoricalIndexer, enqueueHistoricalSource, listHistoricalSources } from '../services/historicalIndexing.ts';
+import { getHistoricalIndexerStatus, startHistoricalIndexer, pauseHistoricalIndexer, resumeHistoricalIndexer, enqueueHistoricalSource, enqueueExistingHistoricalSource, listHistoricalSources } from '../services/historicalIndexing.ts';
 import { registerTelegramErrorHandler } from './middleware/errorHandler.ts';
 import { registerUserTrackingMiddleware } from './middleware/userTracking.ts';
 
@@ -1352,8 +1352,49 @@ deliveryBot?.command('start', async (ctx) => {
 
   controllerBot.action('admin:history:sources', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
+    const sources = await listHistoricalSources(20);
     await ctx.answerCbQuery();
-    return showHistoricalIndexer(ctx);
+    const rows = sources.map((source) => [
+      Markup.button.callback(
+        `📥 ${(source.title || source.source_username || source.source_chat_id).slice(0, 28)}`,
+        `admin:history:queue:${source.id}`,
+      ),
+    ]);
+    rows.push([Markup.button.callback('➕ Add another channel', 'admin:history:add')]);
+    rows.push([Markup.button.callback('🔄 Refresh sources', 'admin:history:sources'), Markup.button.callback('⬅️ History', 'admin:history')]);
+    return ctx.reply(
+      '<b>SELECT CHANNELS TO INDEX</b>\\n\\nTap a channel to queue its full history. You can return here and select additional channels; active jobs are not duplicated.',
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) },
+    );
+  });
+
+  controllerBot.action(/^admin:history:queue:([0-9a-f-]{36})$/i, async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
+    try {
+      const result = await enqueueExistingHistoricalSource(ctx.match[1], ctx.from!.id);
+      await startHistoricalIndexer();
+      const label = escapeHtml(result.source.title || result.source.source_username || result.source.source_chat_id);
+      await ctx.answerCbQuery(result.alreadyQueued ? 'Already queued or running.' : 'Channel queued.');
+      await ctx.reply(
+        (result.alreadyQueued ? 'ℹ️ This channel already has an active job.' : '✅ Channel queued for full-history indexing.') +
+        '\\n\\n📡 <b>' + label + '</b>\\n🆔 Job: <code>#' + result.jobId + '</code>',
+        { parse_mode: 'HTML' },
+      );
+      const sources = await listHistoricalSources(20);
+      const rows = sources.map((source) => [
+        Markup.button.callback(
+          `📥 ${(source.title || source.source_username || source.source_chat_id).slice(0, 28)}`,
+          `admin:history:queue:${source.id}`,
+        ),
+      ]);
+      rows.push([Markup.button.callback('➕ Add another channel', 'admin:history:add')]);
+      rows.push([Markup.button.callback('⬅️ History', 'admin:history')]);
+      return ctx.reply('<b>SELECT ANOTHER CHANNEL</b>', { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await ctx.answerCbQuery('Could not queue channel.', { show_alert: true });
+      return ctx.reply('❌ <b>Historical indexing error</b>\\n' + escapeHtml(message), { parse_mode: 'HTML' });
+    }
   });
 
   controllerBot.action('admin:history', async (ctx) => {
