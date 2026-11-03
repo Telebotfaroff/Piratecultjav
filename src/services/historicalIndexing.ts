@@ -58,3 +58,89 @@ export async function resumeHistoricalIndexer(): Promise<void> {
   if (error) throw new Error(`Failed resuming historical jobs: ${error.message}`);
   await setSetting(CONTROL_KEY, true);
 }
+
+
+export interface HistoricalSource {
+  id: string;
+  source_chat_id: string;
+  source_username: string | null;
+  title: string | null;
+  is_active: boolean;
+}
+
+export async function listHistoricalSources(limit = 10): Promise<HistoricalSource[]> {
+  const { data, error } = await getSupabase()
+    .from('index_sources')
+    .select('id, source_chat_id, source_username, title, is_active')
+    .order('created_at', { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 25));
+  if (error) throw new Error(`Failed loading historical sources: ${error.message}`);
+  return (data || []) as HistoricalSource[];
+}
+
+export async function enqueueHistoricalSource(input: string, requestedBy: number): Promise<{ source: HistoricalSource; jobId: number; alreadyQueued: boolean }> {
+  const supabase = getSupabase();
+  const raw = input.trim();
+  const username = raw.replace(/^https?:\\/\\/(?:www\\.)?t\\.me\\//i, '').replace(/^@/, '').replace(/\\/+$/, '');
+  const isUsername = /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(username) && !/^-?\\d+$/.test(username);
+  const sourceChatId = isUsername ? username : raw;
+  if (!isUsername && !/^-100\\d{5,}$/.test(sourceChatId)) {
+    throw new Error('Send a public @username / t.me link or a numeric channel ID like -1001234567890.');
+  }
+
+  const { data: existingSource, error: lookupError } = await supabase
+    .from('index_sources')
+    .select('id, source_chat_id, source_username, title, is_active')
+    .eq('source_chat_id', sourceChatId)
+    .maybeSingle();
+  if (lookupError) throw new Error(`Failed checking source: ${lookupError.message}`);
+
+  let source = existingSource as HistoricalSource | null;
+  if (!source) {
+    const { data, error } = await supabase
+      .from('index_sources')
+      .insert({
+        source_chat_id: sourceChatId,
+        source_username: isUsername ? username : null,
+        title: isUsername ? `@${username}` : sourceChatId,
+        is_active: true,
+        media_mode: 'all',
+        created_by: requestedBy,
+      })
+      .select('id, source_chat_id, source_username, title, is_active')
+      .single();
+    if (error) throw new Error(`Failed adding source channel: ${error.message}`);
+    source = data as HistoricalSource;
+  } else if (!source.is_active) {
+    const { error } = await supabase.from('index_sources').update({ is_active: true }).eq('id', source.id);
+    if (error) throw new Error(`Failed activating source: ${error.message}`);
+    source.is_active = true;
+  }
+
+  const { data: activeJob, error: activeError } = await supabase
+    .from('historical_index_jobs')
+    .select('id')
+    .eq('source_id', source.id)
+    .in('status', ['queued', 'running', 'paused'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (activeError) throw new Error(`Failed checking existing source jobs: ${activeError.message}`);
+  if (activeJob) return { source, jobId: Number(activeJob.id), alreadyQueued: true };
+
+  const { data: job, error: jobError } = await supabase
+    .from('historical_index_jobs')
+    .insert({
+      source_id: source.id,
+      source_chat_id: sourceChatId,
+      status: 'queued',
+      media_mode: 'all',
+      start_message_id: null,
+      end_message_id: null,
+      requested_by: requestedBy,
+    })
+    .select('id')
+    .single();
+  if (jobError) throw new Error(`Failed creating historical indexing job: ${jobError.message}`);
+  return { source, jobId: Number(job.id), alreadyQueued: false };
+}
