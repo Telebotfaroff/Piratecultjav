@@ -3,12 +3,13 @@
 ## Phase 0 — Baseline and safety
 - [x] Create isolated V2 branch from main.
 - [x] Document target architecture and migration rules.
+- [x] Additive historical-indexing schema foundation (migration 029).
 - [ ] Record current database migration head and production schema.
 - [ ] Add CI checks for TypeScript, tests, migrations, and Python worker.
 
 ## Phase 1 — Web navigation and runtime separation
-- [ ] Make catalog page/search state URL-backed.
-- [ ] Restore catalog URL and scroll position after video details Back.
+- [x] Make catalog page/search state URL-backed.
+- [x] Restore catalog URL and scroll position after video details Back.
 - [ ] Split process entrypoints for web, controller, and user bot without changing handlers yet.
 - [ ] Make controller and User Bot startup failures independent.
 - [ ] Add separate health/status reporting for each runtime.
@@ -22,8 +23,8 @@
 - [ ] Add typed diagnostics for source-channel vs destination-chat failures.
 
 ## Phase 3 — Historical indexing
-- [ ] Add additive Supabase schema for sources, jobs, checkpoints, and source message references.
-- [ ] Add Python/Pyrogram worker and dependency lock.
+- [x] Add additive Supabase schema for sources, jobs, checkpoints, and source message references.
+- [x] Add initial Python/Pyrogram worker and dependency lock.
 - [ ] Validate session and channel access.
 - [ ] Index all supported media by default.
 - [ ] Add idempotency, checkpoints, leases, retry/backoff, pause/resume/cancel.
