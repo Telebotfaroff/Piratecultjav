@@ -63,8 +63,12 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+      - name: Install historical indexer dependencies
+        run: pip install -r workers/historical_indexer/requirements.txt
       - name: Check historical indexer Python syntax
         run: python -m compileall -q workers/historical_indexer
+      - name: Test historical indexer helpers
+        run: python -m unittest discover -s workers/historical_indexer/tests -v
       - name: Unit tests
         run: npm test
       - name: Build frontend and server
