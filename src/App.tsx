@@ -531,7 +531,7 @@ function CatalogPage({
         setSearchInput={setSearchInput}
         submitSearch={submitSearch}
         clearSearch={clearSearch}
-        onHomeClick={() => navigate('/')}
+        onHomeClick={clearSearch}
       />
 
       <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6">
