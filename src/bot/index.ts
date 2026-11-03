@@ -3199,15 +3199,8 @@ export async function startBotPolling(): Promise<boolean> {
     await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(err => {
       console.warn('[TelegramBot] Could not clear an existing webhook before polling:', err instanceof Error ? err.message : String(err));
     });
-    bot.launch({ dropPendingUpdates: false }).catch(async err => {
-      if (launchGeneration !== pollingLaunchGeneration || botInstance !== bot) return;
-      isPollingActive = false;
-      activeTransportMode = 'offline';
-      botInstance = null;
-      const message = err instanceof Error ? err.message : String(err);
-      console.error('[TelegramBot] Polling error:', message);
-      if (role === 'primary') await failoverToBackup(message);
-    });
+    await bot.launch({ dropPendingUpdates: false });
+    if (launchGeneration !== pollingLaunchGeneration || botInstance !== bot) return false;
     isPollingActive = true;
     isWebhookActive = false;
     activeTransportMode = 'polling';
@@ -3316,8 +3309,28 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
   } catch (err) {
     const info = classifyTelegramError(err);
     console.warn(`[TelegramBot] ${role.toUpperCase()} Telegram API is temporarily unavailable: ${info.message}`);
-    scheduleWebhookRecovery(app);
-    return false;
+
+    // A transient failure for one token should not prevent us from testing the
+    // configured backup. If Telegram itself is down, this attempt will fail too
+    // and the normal recovery timer will retry without dropping pending updates.
+    const fallback = role === 'primary' ? 'backup' : 'primary';
+    if (tokenForRole(fallback) && !runtimeFailoverAttempted) {
+      try {
+        const fallbackBot = await validateAndBuild(fallback);
+        if (fallbackBot) {
+          console.warn(`[TelegramBot] ${role.toUpperCase()} startup failed; ${fallback.toUpperCase()} bot validated instead.`);
+          role = fallback;
+          bot = fallbackBot;
+        }
+      } catch (fallbackError) {
+        const fallbackInfo = classifyTelegramError(fallbackError);
+        console.warn(`[TelegramBot] ${fallback.toUpperCase()} Telegram API is also unavailable: ${fallbackInfo.message}`);
+      }
+    }
+    if (!bot) {
+      scheduleWebhookRecovery(app);
+      return false;
+    }
   }
 
   if (!bot && !runtimeFailoverAttempted) {
@@ -3391,16 +3404,10 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
       await bot!.telegram.deleteWebhook({ drop_pending_updates: false });
       const launchGeneration = ++pollingLaunchGeneration;
       botInstance = bot!;
+      await bot!.launch({ dropPendingUpdates: false });
+      if (launchGeneration !== pollingLaunchGeneration || botInstance !== bot) return false;
       isPollingActive = true;
       activeTransportMode = 'polling';
-      bot!.launch({ dropPendingUpdates: false }).catch(async pollingError => {
-        if (launchGeneration !== pollingLaunchGeneration || botInstance !== bot) return;
-        isPollingActive = false;
-        activeTransportMode = 'offline';
-        const message = pollingError instanceof Error ? pollingError.message : String(pollingError);
-        console.error('[TelegramBot] Long-polling fallback failed:', message);
-        scheduleWebhookRecovery(app, 30_000);
-      });
       startRuntimeHealthMonitor();
       console.warn('[TelegramBot] Webhook registration failed; long-polling fallback started.');
       scheduleWebhookRecovery(app, 5 * 60_000);
