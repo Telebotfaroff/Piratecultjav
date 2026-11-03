@@ -3201,7 +3201,9 @@ export async function startBotPolling(): Promise<boolean> {
     stopBotPolling();
   }
 
-  const deliveryToken = await getSetting<string>('delivery_bot_token', '');
+  let deliveryToken = '';
+  try { deliveryToken = await getSetting<string>('delivery_bot_token', ''); }
+  catch (error) { console.warn('[TelegramBot] Delivery config unavailable; starting controller only:', error); }
   isDeliveryBotConfigured = Boolean(deliveryToken);
   const preferredRole = getStoredActiveBotRole();
   const roles: Array<'primary' | 'backup'> = [
