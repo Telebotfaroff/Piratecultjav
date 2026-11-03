@@ -2841,12 +2841,12 @@ deliveryBot?.command('start', async (ctx) => {
         const label = escapeHtml(result.source.title || result.source.source_username || result.source.source_chat_id);
         await ctx.reply(
           (result.alreadyQueued ? 'ℹ️ This source already has an active job.' : '✅ Historical indexing job queued.') +
-          '\\n\\n📡 Source: <b>' + label + '</b>\\n🆔 Job: <code>#' + result.jobId + '</code>\\n📚 Range: <b>All available messages</b>\\n\\nThe worker will validate channel access and begin scanning.',
+          '\n\n📡 Source: <b>' + label + '</b>\n🆔 Job: <code>#' + result.jobId + '</code>\n📚 Range: <b>All available messages</b>\n\nThe worker will validate channel access and begin scanning.',
           { parse_mode: 'HTML' },
         );
         return showHistoricalIndexer(ctx, false);
       } catch (error) {
-        return ctx.reply('❌ Could not add source: ' + escapeHtml(error instanceof Error ? error.message : String(error)) + '\\n\\nTry again or send /cancel.', { parse_mode: 'HTML' });
+        return ctx.reply('❌ Could not add source: ' + escapeHtml(error instanceof Error ? error.message : String(error)) + '\n\nTry again or send /cancel.', { parse_mode: 'HTML' });
       }
     }
 
