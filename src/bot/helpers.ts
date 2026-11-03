@@ -704,6 +704,7 @@ async function showAdminSettings(ctx: any) {
     [Markup.button.callback('📣 Broadcast', 'settings:broadcast'), Markup.button.callback('🔒 Force Sub', 'settings:forcesub')],
     [Markup.button.callback('🧾 Missing Metadata', 'admin:missedcodes')],
     [Markup.button.callback('🔔 Notification Channels', 'settings:notifications')],
+    [Markup.button.callback('🚚 Delivery Bot', 'settings:deliverybot')],
     [Markup.button.callback('🛠️ System', 'admin:system'), Markup.button.callback('🔄 Recovery', 'settings:recovery')],
     [Markup.button.callback('❌ Close', 'settings:close')],
   ]);

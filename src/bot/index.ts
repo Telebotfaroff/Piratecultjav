@@ -1273,6 +1273,28 @@ deliveryBot?.command('start', async (ctx) => {
     return showAdminSettings(ctx);
   });
 
+  controllerBot.action('settings:deliverybot', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await ctx.answerCbQuery();
+    try {
+      const token = await getSetting<string>('delivery_bot_token', '');
+      const configured = typeof token === 'string' && token.length > 0;
+      const message =
+        '🚚 <b>DELIVERY BOT SETTINGS</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
+        'Status: <b>' + (configured ? '🟢 Configured' : '⚪ Not configured') + '</b>\n\n' +
+        'To configure or replace the delivery bot, send this command with the token from @BotFather:\n' +
+        '<code>/setdeliverybot YOUR_BOT_TOKEN</code>\n\n' +
+        'The bot validates the token before saving it. Your token is never displayed here.';
+      return ctx.editMessageText(message, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Admin Center', 'settings:main')]]),
+      });
+    } catch (err) {
+      console.error('[DeliveryBot] Could not load settings:', err);
+      return ctx.reply('❌ Could not load Delivery Bot settings.');
+    }
+  });
+
   controllerBot.action('admin:overview', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
