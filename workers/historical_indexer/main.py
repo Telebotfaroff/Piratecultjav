@@ -167,6 +167,15 @@ class HistoricalIndexer:
         if self.pool:
             await self.pool.close()
 
+    async def indexing_enabled(self) -> bool:
+        assert self.pool
+        value = await self.pool.fetchval(
+            "SELECT value FROM public.bot_settings WHERE key = 'historical_indexer_enabled'"
+        )
+        if isinstance(value, str):
+            return value.strip().lower() == "true"
+        return value is True
+
     async def claim_job(self) -> asyncpg.Record | None:
         assert self.pool
         async with self.pool.acquire() as connection:
@@ -400,14 +409,15 @@ class HistoricalIndexer:
             await self.start()
             LOG.info("Historical indexer worker ready | worker_id=%s", self.worker_id)
             while not self.stop_event.is_set():
-                job = await self.claim_job()
-                if job:
-                    await self.process_job(job)
-                else:
-                    try:
-                        await asyncio.wait_for(self.stop_event.wait(), timeout=self.poll_interval)
-                    except asyncio.TimeoutError:
-                        pass
+                if await self.indexing_enabled():
+                    job = await self.claim_job()
+                    if job:
+                        await self.process_job(job)
+                        continue
+                try:
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=self.poll_interval)
+                except asyncio.TimeoutError:
+                    pass
         finally:
             await self.stop()
 
