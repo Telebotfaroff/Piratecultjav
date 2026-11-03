@@ -142,13 +142,28 @@ export function createApp(): express.Express {
     return res.json({ ok: true, authenticated: Boolean(expiresAt && expiresAt > Date.now()) });
   });
 
-  // Non-negotiable requirement: /health endpoint
+  // Liveness endpoint: keep HTTP health separate from dependency readiness.
+  // A Telegram outage must not cause Render to restart a healthy web/indexer process.
+  // Expose the bot state here so an HTTP 200 cannot be mistaken for a connected bot.
   app.get('/health', (_req: Request, res: Response) => {
+    const telegramConfigured = Boolean(config.botToken || config.backupBotToken);
+    const telegramActive = isBotActive();
     res.status(200).json({
       ok: true,
       service: 'PiratecultJAV',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
+      components: {
+        http: 'healthy',
+        database: 'check /ready',
+        indexer: 'check /api/status',
+        telegram: !telegramConfigured ? 'not_configured' : telegramActive ? 'connected' : 'reconnecting',
+      },
+      telegram: {
+        configured: telegramConfigured,
+        active: telegramActive,
+        mode: config.webhookUrl && config.webhookSecret ? 'webhook' : 'polling',
+      },
     });
   });
 
