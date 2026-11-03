@@ -682,25 +682,30 @@ async function showAdminSettings(ctx: any) {
   ]);
 
   const text = [
-    '🛡️ <b>PIRATECULTJAV ADMIN CENTER</b>',
+    '🛡️ <b>PIRATECULTJAV CONTROL PANEL</b>',
+    '━━━━━━━━━━━━━━━━━━━━',
     '',
-    '📈 <b>Quick Overview</b>',
+    '📊 <b>LIVE DASHBOARD</b>',
     `👥 Users: <b>${users}</b>  ·  🎬 Videos: <b>${videos}</b>`,
     `⚙️ Jobs: <b>${jobs.queued}</b> queued · <b>${jobs.processing}</b> processing`,
     `🤖 Bot: <b>ONLINE</b> · ${getActiveBotRole().toUpperCase()}`,
     '',
-    '🔐 <b>Access</b>',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '🔐 <b>ACCESS & SAFETY</b>',
     `🔒 Force Sub: <b>${forceSub ? 'ON' : 'OFF'}</b>`,
     `🛠️ Maintenance: <b>${maintenance ? 'ON' : 'OFF'}</b>`,
     `🗑️ Auto Delete: <b>${formatTimer(deleteTimer)}</b>`,
     '',
-    'Choose an admin section:',
+    '━━━━━━━━━━━━━━━━━━━━',
+    '🧭 <b>MANAGEMENT SECTIONS</b>',
+    '<i>Select a module below to manage your bot.</i>',
   ].join('\n');
 
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('📊 Overview', 'admin:overview'), Markup.button.callback('👥 Users', 'admin:users')],
     [Markup.button.callback('💰 Monetization', 'admin:monetization'), Markup.button.callback('📥 Quotas', 'admin:quota')],
     [Markup.button.callback('🎬 Content', 'admin:content'), Markup.button.callback('⚙️ Jobs', 'admin:jobs')],
+    [Markup.button.callback('🕘 Historical Indexer', 'admin:history')],
     [Markup.button.callback('📣 Broadcast', 'settings:broadcast'), Markup.button.callback('🔒 Force Sub', 'settings:forcesub')],
     [Markup.button.callback('🧾 Missing Metadata', 'admin:missedcodes')],
     [Markup.button.callback('🔔 Notification Channels', 'settings:notifications')],
