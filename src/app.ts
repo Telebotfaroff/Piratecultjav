@@ -27,8 +27,8 @@ const PUBLIC_RATE_BUCKET_MAX = 10_000;
 let lastPublicRateCleanupAt = 0;
 
 function publicRateLimit(req: Request, res: Response, next: express.NextFunction): void {
-  // Do not trust a client-supplied X-Forwarded-For header. Configure Express
-  // trust proxy explicitly at deployment time if requests arrive through a trusted proxy.
+  // req.ip uses only the bounded trusted-proxy chain configured in createApp().
+  // Never set trust proxy to true: that would allow arbitrary forwarded headers.
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const now = Date.now();
 
