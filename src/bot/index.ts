@@ -1271,12 +1271,12 @@ deliveryBot?.command('start', async (ctx) => {
       ? sources.map((source, index) => `${index + 1}. ${escapeHtml(source.title || source.source_username || source.source_chat_id)} · ${source.is_active ? 'Active' : 'Off'}`)
       : ['No source channels added yet.'];
     const text =
-      '🕘 <b>HISTORICAL INDEXER</b>\\n━━━━━━━━━━━━━━━━━━━━\\n\\n' +
-      '⚙️ Control: <b>' + (status.enabled ? '🟢 ENABLED' : '⏸ PAUSED') + '</b>\\n' +
-      '⏳ Queued: <b>' + status.queued + '</b> · 🔄 Running: <b>' + status.running + '</b>\\n' +
-      '⏸ Paused: <b>' + status.paused + '</b> · ❌ Failed: <b>' + status.failed + '</b>\\n' +
-      '✅ Completed: <b>' + status.completed + '</b> · 📦 Total: <b>' + status.total + '</b>\\n\\n' +
-      '<b>Source channels</b>\\n' + sourceLines.join('\\n') + '\\n\\n' +
+      '🕘 <b>HISTORICAL INDEXER</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
+      '⚙️ Control: <b>' + (status.enabled ? '🟢 ENABLED' : '⏸ PAUSED') + '</b>\n' +
+      '⏳ Queued: <b>' + status.queued + '</b> · 🔄 Running: <b>' + status.running + '</b>\n' +
+      '⏸ Paused: <b>' + status.paused + '</b> · ❌ Failed: <b>' + status.failed + '</b>\n' +
+      '✅ Completed: <b>' + status.completed + '</b> · 📦 Total: <b>' + status.total + '</b>\n\n' +
+      '<b>Source channels</b>\n' + sourceLines.join('\n') + '\n\n' +
       '<i>New sources are scanned from the latest message through all available history.</i>';
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('➕ Add Channel', 'admin:history:add'), Markup.button.callback('📋 Sources', 'admin:history:sources')],
@@ -1338,7 +1338,7 @@ deliveryBot?.command('start', async (ctx) => {
     await setAdminSession(ctx.from!.id, 'historical_source_add', 'awaiting_channel');
     await ctx.answerCbQuery();
     return ctx.reply(
-      '➕ <b>Add Historical Source</b>\\n\\nSend a public channel as <code>@username</code> or <code>https://t.me/username</code>, or send its numeric ID (for example <code>-1001234567890</code>).\\n\\nThe worker will scan <b>all available messages</b>, newest to oldest. The Pyrogram account must already have access to the channel.\\n\\nSend /cancel to stop.',
+      '➕ <b>Add Historical Source</b>\n\nSend a public channel as <code>@username</code> or <code>https://t.me/username</code>, or send its numeric ID (for example <code>-1001234567890</code>).\n\nThe worker will scan <b>all available messages</b>, newest to oldest. The Pyrogram account must already have access to the channel.\n\nSend /cancel to stop.',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'admin:history:add:cancel')]]) },
     );
   });
