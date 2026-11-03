@@ -1821,10 +1821,9 @@ deliveryBot?.command('start', async (ctx) => {
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
-          [Markup.button.callback('📝 Post Video', 'admin:post_help'), Markup.button.callback('🧪 Provider Test', 'admin:test_help')],
-          [Markup.button.callback('⚙️ Jobs', 'admin:jobs')],
-          [Markup.button.callback('🕘 Historical Indexer', 'admin:history')],
-          [Markup.button.callback('⬅️ Back', 'settings:main')],
+          [Markup.button.callback('📝 Post', 'admin:post_help'), Markup.button.callback('🧪 Test Provider', 'admin:test_help')],
+          [Markup.button.callback('⚙️ Jobs', 'admin:jobs'), Markup.button.callback('🕘 History', 'admin:history')],
+          [Markup.button.callback('⬅️ Admin Center', 'settings:main')],
         ]),
       },
     );
@@ -1868,8 +1867,7 @@ deliveryBot?.command('start', async (ctx) => {
     for (const job of jobs) {
       if (job.status === 'failed') rows.push([Markup.button.callback(`🔄 Retry #${job.id}`, `admin:job:retry:${job.id}`)]);
     }
-    rows.push([Markup.button.callback('🔄 Refresh', 'admin:jobs')]);
-    rows.push([Markup.button.callback('⬅️ Back', 'admin:content')]);
+    rows.push([Markup.button.callback('🔄 Refresh', 'admin:jobs'), Markup.button.callback('⬅️ Content', 'admin:content')]);
     return ctx.editMessageText('⚙️ <b>Recent Jobs</b>\n\n' + lines.join('\n'), {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard(rows),
