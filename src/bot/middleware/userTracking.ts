@@ -16,7 +16,14 @@ export function registerUserTrackingMiddleware(bot: Telegraf): void {
           last_name: ctx.from.last_name,
         });
       } catch (err) {
-        console.error('[UserTracking] Database check failed; update skipped:', err instanceof Error ? err.message : String(err));
+        console.error('[UserTracking] Database check failed; update was not processed:', err instanceof Error ? err.message : String(err));
+        // Fail closed: without the database we cannot safely determine whether this
+        // account is blocked. Tell the user to retry instead of silently ignoring them.
+        try {
+          await ctx.reply('⚠️ The service is temporarily unable to verify your account. Please try again in a moment.');
+        } catch (replyError) {
+          console.warn('[UserTracking] Could not send temporary-failure notice:', replyError instanceof Error ? replyError.message : String(replyError));
+        }
         return;
       }
 
