@@ -2,7 +2,14 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 import unittest
 
-from workers.historical_indexer.main import as_utc_datetime, json_list, media_details
+from cryptography.fernet import Fernet
+
+from workers.historical_indexer.main import (
+    as_utc_datetime,
+    json_list,
+    media_details,
+    resolve_session_string,
+)
 
 
 class HistoricalIndexerHelperTests(unittest.TestCase):
@@ -48,6 +55,27 @@ class HistoricalIndexerHelperTests(unittest.TestCase):
 
     def test_json_list_falls_back_for_invalid_json(self):
         self.assertEqual(json_list("not-json", ["video"]), ["video"])
+
+    def test_render_session_takes_priority_over_encrypted_supabase_session(self):
+        session, source = resolve_session_string(
+            {"PYROGRAM_SESSION_STRING": "  render-session  "},
+            "not-a-valid-encrypted-value",
+        )
+        self.assertEqual(session, "render-session")
+        self.assertEqual(source, "environment")
+
+    def test_encrypted_supabase_session_is_used_as_fallback(self):
+        key = Fernet.generate_key().decode()
+        encrypted = Fernet(key.encode()).encrypt(b"supabase-session").decode()
+        session, source = resolve_session_string(
+            {"SESSION_ENCRYPTION_KEY": key}, encrypted
+        )
+        self.assertEqual(session, "supabase-session")
+        self.assertEqual(source, "supabase")
+
+    def test_missing_session_configuration_has_clear_error(self):
+        with self.assertRaisesRegex(RuntimeError, "No Pyrogram session configured"):
+            resolve_session_string({}, None)
 
 
 if __name__ == "__main__":
