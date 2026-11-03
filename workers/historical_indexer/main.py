@@ -318,9 +318,13 @@ class HistoricalIndexer:
         try:
             source_chat = await self.resolve_source_chat(source_chat_id)
             canonical_source_chat_id = str(source_chat.id)
+            # Screenshot indexing is handled exclusively by the Telegraf bot
+            # from screenshot-channel updates. The Pyrogram historical worker is
+            # reserved for dump/video history and must never create screenshot refs.
             allowed = set(json_list(job["media_filters"], list(MEDIA_ATTRIBUTES)))
+            allowed.discard("photo")
             if job["media_mode"] == "all":
-                allowed = set(MEDIA_ATTRIBUTES)
+                allowed = set(MEDIA_ATTRIBUTES) - {"photo"}
             LOG.info("Historical job started | job_id=%s | source=%s", job_id, source_chat_id)
             async for message in self.client.get_chat_history(
                 source_chat.id, limit=0, offset_id=cursor
