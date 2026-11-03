@@ -1280,10 +1280,10 @@ deliveryBot?.command('start', async (ctx) => {
       const token = await getSetting<string>('delivery_bot_token', '');
       const configured = typeof token === 'string' && token.length > 0;
       const message =
-        '🚚 <b>DELIVERY BOT SETTINGS</b>\\n━━━━━━━━━━━━━━━━━━━━\\n\\n' +
-        'Status: <b>' + (configured ? '🟢 Configured' : '⚪ Not configured') + '</b>\\n\\n' +
-        'To configure or replace the delivery bot, send this command with the token from @BotFather:\\n' +
-        '<code>/setdeliverybot YOUR_BOT_TOKEN</code>\\n\\n' +
+        '🚚 <b>DELIVERY BOT SETTINGS</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
+        'Status: <b>' + (configured ? '🟢 Configured' : '⚪ Not configured') + '</b>\n\n' +
+        'To configure or replace the delivery bot, send this command with the token from @BotFather:\n' +
+        '<code>/setdeliverybot YOUR_BOT_TOKEN</code>\n\n' +
         'The bot validates the token before saving it. Your token is never displayed here.';
       return ctx.editMessageText(message, {
         parse_mode: 'HTML',
