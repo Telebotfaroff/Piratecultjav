@@ -9,7 +9,7 @@ import signal
 import socket
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
 import asyncpg
 from cryptography.fernet import Fernet
@@ -35,6 +35,33 @@ def required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def resolve_session_string(
+    environ: Mapping[str, str], encrypted_value: str | None
+) -> tuple[str, str]:
+    """Prefer a Render-provided session; otherwise decrypt the Supabase fallback."""
+    session_string = environ.get("PYROGRAM_SESSION_STRING", "").strip()
+    if session_string:
+        return session_string, "environment"
+
+    if not encrypted_value:
+        raise RuntimeError(
+            "No Pyrogram session configured. Set PYROGRAM_SESSION_STRING in Render "
+            "or store an encrypted session in Supabase private_runtime_secrets."
+        )
+
+    encryption_key = environ.get("SESSION_ENCRYPTION_KEY", "").strip()
+    if not encryption_key:
+        raise RuntimeError(
+            "Missing SESSION_ENCRYPTION_KEY for the encrypted Supabase Pyrogram session."
+        )
+
+    try:
+        decrypted = Fernet(encryption_key.encode()).decrypt(encrypted_value.encode()).decode()
+    except Exception as exc:
+        raise RuntimeError("Could not decrypt the configured Pyrogram session.") from exc
+    return decrypted, "supabase"
 
 
 def json_list(value: Any, fallback: list[str]) -> list[str]:
@@ -101,7 +128,6 @@ class HistoricalIndexer:
         database_url = required_env("DATABASE_URL")
         api_id = int(required_env("API_ID"))
         api_hash = required_env("API_HASH")
-        encryption_key = required_env("SESSION_ENCRYPTION_KEY").encode()
         self.pool = await asyncpg.create_pool(
             database_url,
             min_size=1,
@@ -109,16 +135,17 @@ class HistoricalIndexer:
             command_timeout=30,
             ssl=os.environ.get("DATABASE_SSL", "true").lower() != "false",
         )
-        encrypted = await self.pool.fetchval(
-            "SELECT encrypted_value FROM public.private_runtime_secrets "
-            "WHERE secret_name = 'pyrogram_session_string'"
-        )
-        if not encrypted:
-            raise RuntimeError("No encrypted Pyrogram session is configured in admin settings.")
-        try:
-            session_string = Fernet(encryption_key).decrypt(encrypted.encode()).decode()
-        except Exception as exc:
-            raise RuntimeError("Could not decrypt the configured Pyrogram session.") from exc
+        # Avoid the Supabase secret lookup entirely when Render supplies a session.
+        # The environment variable always takes priority over the encrypted fallback.
+        session_from_env = bool(os.environ.get("PYROGRAM_SESSION_STRING", "").strip())
+        encrypted = None
+        if not session_from_env:
+            encrypted = await self.pool.fetchval(
+                "SELECT encrypted_value FROM public.private_runtime_secrets "
+                "WHERE secret_name = 'pyrogram_session_string'"
+            )
+        session_string, session_source = resolve_session_string(os.environ, encrypted)
+        LOG.info("Pyrogram session source selected | source=%s", session_source)
 
         self.client = Client(
             "piratecult-historical-indexer",
