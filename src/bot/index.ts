@@ -22,7 +22,8 @@ import { getPremiumPackages, savePremiumPackage, removePremiumPackage, togglePre
 import { registerTelegramErrorHandler } from './middleware/errorHandler.ts';
 import { registerUserTrackingMiddleware } from './middleware/userTracking.ts';
 
-let botInstance: Telegraf | null = null;
+let controllerBotInstance: Telegraf | null = null;
+let deliveryBotInstance: Telegraf | null = null;
 let isPollingActive = false;
 let isWebhookActive = false;
 let activeTransportMode: 'webhook' | 'polling' | 'offline' = 'offline';
@@ -121,22 +122,21 @@ function availableRole(preferred: 'primary' | 'backup'): 'primary' | 'backup' | 
   return tokenForRole(fallback) ? fallback : null;
 }
 
-function createBot(token: string): Telegraf {
-  const bot = new Telegraf(token);
+function setupBots(controllerBot: Telegraf, deliveryBot: Telegraf | null): void {
 
-  registerPaymentEvents(bot);
+  if (deliveryBot) {
+    registerPaymentEvents(deliveryBot);
+    installMessageDeleteTimer(deliveryBot);
+    registerTelegramErrorHandler(deliveryBot);
+    registerUserTrackingMiddleware(deliveryBot);
+  }
 
-  // Automatically delete bot-created messages according to the admin-configured timer.
-  // Dump-channel storage messages are excluded so indexed videos remain available.
-  installMessageDeleteTimer(bot);
-
-  registerTelegramErrorHandler(bot);
-
-  // 1. User tracking & blocked filter middleware
-  registerUserTrackingMiddleware(bot);
+  installMessageDeleteTimer(controllerBot);
+  registerTelegramErrorHandler(controllerBot);
+  registerUserTrackingMiddleware(controllerBot);
 
   // Let an admin opt a requester into a one-time alert when a matching catalog item appears.
-  bot.action(/^notfound:watch:([a-f0-9]+)$/, async (ctx) => {
+  controllerBot.action(/^notfound:watch:([a-f0-9]+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
     const requestId = ctx.match[1];
     const alerts = await getSetting<any[]>('not_found_alerts', []);
@@ -154,7 +154,7 @@ function createBot(token: string): Telegraf {
     }).catch(() => undefined);
   });
 
-  bot.action('notfound:watching', async (ctx) => ctx.answerCbQuery('This request is already being watched.'));
+  controllerBot.action('notfound:watching', async (ctx) => ctx.answerCbQuery('This request is already being watched.'));
 
   // Poll pending requests in the settings store and notify users once a matching catalog result exists.
   if (pendingNotFoundWatcher) clearInterval(pendingNotFoundWatcher);
@@ -183,9 +183,10 @@ function createBot(token: string): Telegraf {
               remaining.push(request);
               continue;
             }
-            const me = await bot.telegram.getMe();
+            const targetBot = deliveryBot || controllerBot;
+            const me = await targetBot.telegram.getMe();
             const safe = (value: unknown) => escapeHtml(value ?? '—');
-            await bot.telegram.sendMessage(
+            await (deliveryBot || controllerBot).telegram.sendMessage(
               Number(request.userId),
               '🎉 <b>Your requested video has been added!</b>\n\n🎬 <b>' + safe(match.code) + '</b> — ' + safe(match.title) +
               '\n\nTap below to get it.',
@@ -209,12 +210,29 @@ function createBot(token: string): Telegraf {
   }, 120_000);
   pendingNotFoundWatcher.unref?.();
 
-  // 2. Start command
-  bot.command('dashboard', async (ctx) => sendUserPlan(ctx));
-  bot.command('leaderboard', async (ctx) => sendReferralLeaderboard(ctx));
-  bot.command('plan', async (ctx) => sendUserPlan(ctx));
 
-bot.command('start', async (ctx) => {
+  controllerBot.command('setdeliverybot', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return;
+    const token = ctx.message.text.split(' ')[1];
+    if (!token) return ctx.reply('Usage: /setdeliverybot <token>');
+    await setSetting('delivery_bot_token', token);
+    await ctx.reply('Delivery controllerBot token updated. Restarting bots...');
+    setTimeout(() => {
+        const mode = getBotRuntimeStatus().mode;
+        if (mode === 'webhook' && webhookApp) {
+             startBotWebhook(webhookApp);
+        } else {
+             startBotPolling();
+        }
+    }, 1000);
+  });
+
+  // 2. Start command
+  deliveryBot?.command('dashboard', async (ctx) => sendUserPlan(ctx));
+  deliveryBot?.command('leaderboard', async (ctx) => sendReferralLeaderboard(ctx));
+  deliveryBot?.command('plan', async (ctx) => sendUserPlan(ctx));
+
+deliveryBot?.command('start', async (ctx) => {
     const startText = 'text' in ctx.message ? ctx.message.text : '';
     let payload = startText.replace(/^\/start(?:@\w+)?\s*/i, '').trim();
 
@@ -236,7 +254,7 @@ bot.command('start', async (ctx) => {
 
     if (payload) {
       const videoId = extractVideoIdFromStartPayload(payload);
-      return deliverVideoToUser(bot, ctx, videoId ?? payload, videoId ? 'deep_link' : 'unknown');
+      return deliverVideoToUser(controllerBot, ctx, videoId ?? payload, videoId ? 'deep_link' : 'unknown');
     }
 
     const welcome = [
@@ -282,7 +300,7 @@ bot.command('start', async (ctx) => {
   });
 
   // Help and search shortcuts use the same navigation style as the home screen.
-  bot.command('help', async (ctx) => {
+  deliveryBot?.command('help', async (ctx) => {
     const helpText = [
       '❓ <b>PIRATECULTJAV HELP</b>',
       '',
@@ -305,14 +323,14 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.command('search', async (ctx) => {
+  deliveryBot?.command('search', async (ctx) => {
     return ctx.reply(
       '🔎 <b>Search the catalog</b>\n\nSend a video code (for example <code>ADN-001</code>) or a keyword in your next message.',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🏠 Home', 'menu:home')]]) },
     );
   });
 
-  bot.action('menu:home', async (ctx) => {
+  deliveryBot?.action('menu:home', async (ctx) => {
     await ctx.answerCbQuery();
     const welcome = [
       '╭━━━━━━━━━━━━━━━━━━━━╮',
@@ -352,7 +370,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('menu:search', async (ctx) => {
+  deliveryBot?.action('menu:search', async (ctx) => {
     await ctx.answerCbQuery();
     const prompt = '🔎 <b>Search the catalog</b>\n\nSend a video code or keyword in your next message.\n\nExamples: <code>ADN-001</code>, <code>STAR-765</code>';
     const options = { parse_mode: 'HTML' as const, ...Markup.inlineKeyboard([[Markup.button.callback('🏠 Home', 'menu:home')]]) };
@@ -364,7 +382,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('menu:help', async (ctx) => {
+  deliveryBot?.action('menu:help', async (ctx) => {
     await ctx.answerCbQuery();
     const helpText = [
       '❓ <b>PIRATECULTJAV HELP</b>',
@@ -392,7 +410,7 @@ bot.command('start', async (ctx) => {
   });
 
   // 3. Cancel command
-  bot.command('cancel', async (ctx) => {
+  controllerBot.command('cancel', async (ctx) => {
     if (ctx.from) {
       await clearAdminSession(ctx.from.id);
     }
@@ -400,7 +418,7 @@ bot.command('start', async (ctx) => {
   });
 
   // Advanced delivery analytics for administrators.
-  bot.command('analytics', async (ctx) => {
+  controllerBot.command('analytics', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     const rawHours = Number(ctx.message.text.trim().split(/\s+/)[1] || '24');
     const hours = Number.isFinite(rawHours) ? Math.min(Math.max(Math.floor(rawHours), 1), 168) : 24;
@@ -414,7 +432,7 @@ bot.command('start', async (ctx) => {
     }
   });
   // 4. Admin stats command
-  bot.command('stats', async (ctx) => {
+  controllerBot.command('stats', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) {
       return ctx.reply('Unauthorized: Admin access required.');
     }
@@ -480,7 +498,7 @@ bot.command('start', async (ctx) => {
   }
 
   // 5. Admin /post workflow
-  bot.command('post', async (ctx) => {
+  controllerBot.command('post', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) {
       return ctx.reply('Unauthorized: Admin access required.');
     }
@@ -491,26 +509,26 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action('admin:missedcodes', async (ctx) => {
+  controllerBot.action('admin:missedcodes', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
     await ctx.answerCbQuery();
     return showMissedCodes(ctx, 1, true);
   });
 
-  bot.command('missedcodes', async (ctx) => {
+  controllerBot.command('missedcodes', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     const requestedPage = Number(ctx.message.text.trim().split(/\s+/)[1] || '1');
     const page = Number.isInteger(requestedPage) ? Math.max(1, requestedPage) : 1;
     return showMissedCodes(ctx, page);
   });
 
-  bot.action(/^missedcodes:page:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^missedcodes:page:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
     await ctx.answerCbQuery();
     return showMissedCodes(ctx, Math.max(1, Number(ctx.match[1]) || 1), true);
   });
 
-  bot.action(/^missedcodes:add:([A-Z0-9_-]{1,40})$/, async (ctx) => {
+  controllerBot.action(/^missedcodes:add:([A-Z0-9_-]{1,40})$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
     const code = normalizeCode(ctx.match[1]);
     await ctx.answerCbQuery('Starting manual post…');
@@ -518,7 +536,7 @@ bot.command('start', async (ctx) => {
     return ctx.reply(`✍️ Enter the title for <code>${escapeHtml(code)}</code>, or /cancel to stop.`, { parse_mode: 'HTML' });
   });
 
-  bot.command('payments', async (ctx) => {
+  controllerBot.command('payments', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     try {
       const payments = await listPremiumPayments(20);
@@ -536,7 +554,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('promos', async (ctx) => {
+  controllerBot.command('promos', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const pageArg = Number(ctx.message.text.trim().split(/\s+/)[1] || '1');
     const page = Number.isInteger(pageArg) ? Math.max(1, Math.min(pageArg, 1000)) : 1;
@@ -590,7 +608,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action(/^promos:page:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^promos:page:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const page = Math.max(1, Number(ctx.match[1]) || 1);
@@ -628,7 +646,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('promos:create_help', async (ctx) => {
+  controllerBot.action('promos:create_help', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     await setAdminSession(ctx.from!.id, 'promo_create', 'awaiting_code', {});
@@ -638,7 +656,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('promos:wizard:uses:unlimited', async (ctx) => {
+  controllerBot.action('promos:wizard:uses:unlimited', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const session = await getAdminSession(ctx.from!.id);
     if (session?.action !== 'promo_create' || session.step !== 'awaiting_uses') {
@@ -652,7 +670,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action('promos:wizard:expiry:none', async (ctx) => {
+  controllerBot.action('promos:wizard:expiry:none', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const session = await getAdminSession(ctx.from!.id);
     if (session?.action !== 'promo_create' || session.step !== 'awaiting_expiry') {
@@ -669,7 +687,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action(/^promos:wizard:reward:(premium|semi_premium|unlimited)$/, async (ctx) => {
+  controllerBot.action(/^promos:wizard:reward:(premium|semi_premium|unlimited)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const reward = ctx.match[1];
     const session = await getAdminSession(ctx.from!.id);
@@ -684,7 +702,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action('promos:wizard:confirm', async (ctx) => {
+  controllerBot.action('promos:wizard:confirm', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const session = await getAdminSession(ctx.from!.id);
     if (session?.action !== 'promo_create' || session.step !== 'awaiting_confirmation') {
@@ -715,13 +733,13 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('promos:wizard:cancel', async (ctx) => {
+  controllerBot.action('promos:wizard:cancel', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery('Cancelled');
     await clearAdminSession(ctx.from!.id);
     return ctx.reply('Promo creation cancelled.', { ...Markup.inlineKeyboard([[Markup.button.callback('🎟️ Promo Manager', 'promos:page:1')]]) });
   });
-  bot.command('deactivatepromo', async (ctx) => {
+  controllerBot.command('deactivatepromo', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const code = ctx.message.text.trim().split(/\s+/)[1]?.trim();
     if (!code) return ctx.reply('Usage: /deactivatepromo <CODE>');
@@ -734,7 +752,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('activatepromo', async (ctx) => {
+  controllerBot.command('activatepromo', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const code = ctx.message.text.trim().split(/\s+/)[1]?.trim();
     if (!code) return ctx.reply('Usage: /activatepromo <CODE>');
@@ -747,7 +765,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('createpromo', async (ctx) => {
+  controllerBot.command('createpromo', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
 
     const parts = ctx.message.text.trim().split(/\s+/);
@@ -799,7 +817,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('createpromos', async (ctx) => {
+  controllerBot.command('createpromos', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const parts = ctx.message.text.trim().split(/\s+/);
     const count = Number(parts[1]);
@@ -843,7 +861,7 @@ bot.command('start', async (ctx) => {
     const message = `🎟️ <b>Promo batch complete</b>\n\n✅ Created: <b>${created.length}/${count}</b>\n❌ Failed: <b>${failed}</b>\n🎁 Reward: <b>${rewardType === 'unlimited' ? 'Unlimited' : rewardPlan}</b> · ${days} day(s)\n👥 Uses per code: <b>${maxUses ?? 'Unlimited'}</b>${expiresAt ? `\n⏰ Expires: <b>${escapeHtml(new Date(expiresAt).toLocaleString())}</b>` : ''}\n\n${lines.join('\n')}`;
     return ctx.reply(message.slice(0, 4000), { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🎟️ View Promo Manager', 'promos:page:1')]]) });
   });
-  bot.command('user', async (ctx) => {
+  controllerBot.command('user', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const userId = Number(ctx.message.text.trim().split(/\s+/)[1]);
     if (!Number.isSafeInteger(userId)) return ctx.reply('Usage: /user <telegram_user_id>');
@@ -868,7 +886,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('setquota', async (ctx) => {
+  controllerBot.command('setquota', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const parts = ctx.message.text.trim().split(/\\s+/).slice(1);
     try {
@@ -908,12 +926,12 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('quota', async (ctx) => {
+  controllerBot.command('quota', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     return showQuotaPlanMenu(ctx);
   });
 
-  bot.command('setplan', async (ctx) => {
+  controllerBot.command('setplan', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const parts = ctx.message.text.trim().split(/\s+/);
     const userId = Number(parts[1]);
@@ -925,16 +943,16 @@ bot.command('start', async (ctx) => {
     return ctx.reply(ok ? `✅ User ${userId} set to ${plan}.` : '❌ User not found.');
   });
 
-  bot.command('premium', async (ctx) => {
+  deliveryBot?.command('premium', async (ctx) => {
     return sendPremiumStore(ctx);
   });
 
-  bot.command('premiumadmin', async (ctx) => {
+  controllerBot.command('premiumadmin', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     return showPremiumPackageManager(ctx);
   });
 
-  bot.command('promo', async (ctx) => {
+  deliveryBot?.command('promo', async (ctx) => {
     if (!ctx.from) return;
     const parts = ctx.message.text.trim().split(/\s+/);
     const code = parts[1]?.trim();
@@ -960,18 +978,18 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('plan', async (ctx) => {
+  deliveryBot?.command('plan', async (ctx) => {
     if (!ctx.from) return;
     return sendUserPlan(ctx);
   });
 
-  bot.command('referral', async (ctx) => {
+  deliveryBot?.command('referral', async (ctx) => {
     if (!ctx.from) return;
-    return sendReferralInfo(bot, ctx);
+    return sendReferralInfo(controllerBot, ctx);
   });
 
   // 6. Admin user blocking commands
-  bot.command('block', async (ctx) => {
+  controllerBot.command('block', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) {
       return ctx.reply('Unauthorized.');
     }
@@ -986,7 +1004,7 @@ bot.command('start', async (ctx) => {
     return ctx.reply(`User ${targetId} has been blocked.`);
   });
 
-  bot.command('unblock', async (ctx) => {
+  controllerBot.command('unblock', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) {
       return ctx.reply('Unauthorized.');
     }
@@ -1002,7 +1020,7 @@ bot.command('start', async (ctx) => {
   });
 
   // 7. Admin broadcast command (web dashboard is the primary UI)
-  bot.command('broadcast', async (ctx) => {
+  controllerBot.command('broadcast', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     if (activeBotBroadcast) return ctx.reply('⚠️ A broadcast is already running. Use /cancelbroadcast to stop it.');
     const message = ctx.message.text.replace(/^\/broadcast\s*/i, '').trim();
@@ -1025,7 +1043,7 @@ bot.command('start', async (ctx) => {
           const batch = page.userIds.slice(i, i + 20);
           await Promise.all(batch.map(async (userId: number) => {
             try {
-              await withTelegramRetry(() => bot.telegram.sendMessage(userId, message), { label: `broadcast:${userId}` });
+              await withTelegramRetry(() => controllerBot.telegram.sendMessage(userId, message), { label: `broadcast:${userId}` });
               sent++;
             } catch (error) {
               if (classifyTelegramError(error).kind === 'blocked') {
@@ -1068,7 +1086,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('cancelbroadcast', async (ctx) => {
+  controllerBot.command('cancelbroadcast', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     if (!activeBotBroadcast) return ctx.reply('There is no active broadcast.');
     if (activeBotBroadcast.adminId !== ctx.from?.id) return ctx.reply('Only the admin who started this broadcast can cancel it.');
@@ -1076,7 +1094,7 @@ bot.command('start', async (ctx) => {
     return ctx.reply('⏹ Cancellation requested. The current batch will finish first.');
   });
 
-  bot.command('jobs', async (ctx) => {
+  controllerBot.command('jobs', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     try {
       const jobs = await getRecentJobs(undefined, 15);
@@ -1088,7 +1106,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('retryjob', async (ctx) => {
+  controllerBot.command('retryjob', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const id = Number(ctx.message.text.split(/\s+/)[1]);
     if (!Number.isInteger(id)) return ctx.reply('Usage: /retryjob <job_id>');
@@ -1100,7 +1118,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('test', async (ctx) => {
+  controllerBot.command('test', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const code = normalizeCode(ctx.message.text.replace(/^\/test\s*/i, ''));
     if (!code) return ctx.reply('Usage: /test <JAV-CODE>');
@@ -1112,7 +1130,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.command('addfs', async (ctx) => {
+  controllerBot.command('addfs', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const raw = ctx.message.text.replace(/^\/addfs\s*/i, '').trim();
     const parts = raw.split('|').map(v => v.trim());
@@ -1120,7 +1138,7 @@ bot.command('start', async (ctx) => {
     const requestMode = /^(true|yes|1)$/i.test((parts[1] || '').replace(/^request\s*:\s*/i, ''));
     if (!channelId) return ctx.reply('Usage: /addfs <channel_id> [| request:true|false]');
     try {
-      const invite = await createForceSubInviteLink(bot, channelId, requestMode);
+      const invite = await createForceSubInviteLink(controllerBot, channelId, requestMode);
       const channel = await upsertForceSubChannel({
         channelId,
         title: invite.title,
@@ -1139,11 +1157,11 @@ bot.command('start', async (ctx) => {
         },
       );
     } catch (err: unknown) {
-      return ctx.reply('❌ Could not add channel. Make sure the bot is an administrator and can create invite links.\n\n' + escapeHtml(err instanceof Error ? err.message : String(err)), { parse_mode: 'HTML' });
+      return ctx.reply('❌ Could not add channel. Make sure the controllerBot is an administrator and can create invite links.\n\n' + escapeHtml(err instanceof Error ? err.message : String(err)), { parse_mode: 'HTML' });
     }
   });
 
-  bot.command('removefs', async (ctx) => {
+  controllerBot.command('removefs', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
     const id = ctx.message.text.split(/\s+/)[1];
     if (!id) return ctx.reply('Usage: /removefs <channel_record_id>');
@@ -1151,7 +1169,7 @@ bot.command('start', async (ctx) => {
     catch (err: unknown) { return ctx.reply('❌ ' + (err instanceof Error ? err.message : String(err))); }
   });
 
-  bot.command('help', async (ctx) => {
+  deliveryBot?.command('help', async (ctx) => {
     return ctx.reply([
       '<b>Help</b>',
       '',
@@ -1170,7 +1188,7 @@ bot.command('start', async (ctx) => {
   });
 
   // Admin command center
-  bot.command('settings', async (ctx) => {
+  controllerBot.command('settings', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     return showAdminSettings(ctx);
   });
@@ -1183,7 +1201,7 @@ bot.command('start', async (ctx) => {
       const member = await ctx.telegram.getChatMember(channelId, me.id);
       if (!['administrator', 'creator'].includes(member.status) ||
           (member.status === 'administrator' && 'can_post_messages' in member && member.can_post_messages === false)) {
-        return ctx.reply('❌ The bot must be an administrator with permission to post in that channel.');
+        return ctx.reply('❌ The controllerBot must be an administrator with permission to post in that channel.');
       }
       await setSetting(key, String(chat.id));
       await clearAdminSession(ctx.from.id);
@@ -1195,11 +1213,11 @@ bot.command('start', async (ctx) => {
         ]) });
     } catch (err) {
       console.warn('[NotificationSettings] Channel validation failed:', err instanceof Error ? err.message : String(err));
-      return ctx.reply('❌ Could not validate that channel. Check the ID, add the bot as an administrator with posting permission, and try again.');
+      return ctx.reply('❌ Could not validate that channel. Check the ID, add the controllerBot as an administrator with posting permission, and try again.');
     }
   }
 
-  bot.command('setjoinchannel', async (ctx) => {
+  controllerBot.command('setjoinchannel', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     const value = 'text' in ctx.message ? ctx.message.text.replace(/^\/setjoinchannel(?:@\w+)?\s*/i, '').trim() : '';
     if (value.toLowerCase() === 'off') {
@@ -1210,7 +1228,7 @@ bot.command('start', async (ctx) => {
     return configureNotificationChannel(ctx, 'join', value);
   });
 
-  bot.command('setnotfoundchannel', async (ctx) => {
+  controllerBot.command('setnotfoundchannel', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     const value = 'text' in ctx.message ? ctx.message.text.replace(/^\/setnotfoundchannel(?:@\w+)?\s*/i, '').trim() : '';
     if (value.toLowerCase() === 'off') {
@@ -1221,23 +1239,23 @@ bot.command('start', async (ctx) => {
     return configureNotificationChannel(ctx, 'notfound', value);
   });
 
-  bot.command('notificationchannels', async (ctx) => {
+  controllerBot.command('notificationchannels', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     return renderNotificationSettings(ctx, false);
   });
 
-  bot.command('admin', async (ctx) => {
+  controllerBot.command('admin', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     return showAdminSettings(ctx);
   });
 
-  bot.action('settings:main', async (ctx) => {
+  controllerBot.action('settings:main', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     return showAdminSettings(ctx);
   });
 
-  bot.action('admin:overview', async (ctx) => {
+  controllerBot.action('admin:overview', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     return showAdminSettings(ctx);
@@ -1250,7 +1268,7 @@ bot.command('start', async (ctx) => {
       '🔔 <b>NOTIFICATION CENTER</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
       '👥 <b>User & Premium Alerts</b>\nNew users and premium purchases\n' + status(joinChannel) + '\n\n' +
       '🔎 <b>Not-Found Search Alerts</b>\nSearches with no matching video\n' + status(notFoundChannel) + '\n\n' +
-      'Choose a notification type to configure it. The bot must be an administrator with permission to post.';
+      'Choose a notification type to configure it. The controllerBot must be an administrator with permission to post.';
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('👥 Configure User Alerts', 'notifications:configure:join')],
       [Markup.button.callback('🔎 Configure Not-Found Alerts', 'notifications:configure:notfound')],
@@ -1275,7 +1293,7 @@ bot.command('start', async (ctx) => {
       : 'Receive alerts when a search returns no matching videos.';
     const text = title + '\n━━━━━━━━━━━━━━━━━━━━\n\n' + description +
       '\n\n📡 <b>Destination:</b> ' + escapeHtml(channel || 'Not configured') +
-      '\n\nChoose how to configure this destination.\n\n💡 Add the bot as an administrator with permission to post messages.';
+      '\n\nChoose how to configure this destination.\n\n💡 Add the controllerBot as an administrator with permission to post messages.';
     const buttons: any[] = [
       [Markup.button.callback('🆔 Enter Channel ID', 'notifications:input:' + type)],
       [Markup.button.callback('🔗 Forward Channel Post', 'notifications:forward:' + type)],
@@ -1290,25 +1308,25 @@ bot.command('start', async (ctx) => {
     return ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
   }
 
-  bot.action('settings:notifications', async (ctx) => {
+  controllerBot.action('settings:notifications', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     await ctx.answerCbQuery();
     return renderNotificationSettings(ctx, true);
   });
 
-  bot.action('notifications:refresh', async (ctx) => {
+  controllerBot.action('notifications:refresh', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     await ctx.answerCbQuery('Configuration refreshed.');
     return renderNotificationSettings(ctx, true);
   });
 
-  bot.action(/^notifications:configure:(join|notfound)$/, async (ctx) => {
+  controllerBot.action(/^notifications:configure:(join|notfound)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     await ctx.answerCbQuery();
     return renderNotificationType(ctx, ctx.match[1] as 'join' | 'notfound', true);
   });
 
-  bot.action(/^notifications:input:(join|notfound)$/, async (ctx) => {
+  controllerBot.action(/^notifications:input:(join|notfound)$/, async (ctx) => {
     if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     const type = ctx.match[1] as 'join' | 'notfound';
     await setAdminSession(ctx.from.id, 'notification_channel', 'awaiting_channel', { type });
@@ -1316,11 +1334,11 @@ bot.command('start', async (ctx) => {
     return ctx.reply('🆔 <b>Set Destination Channel</b>\n\n' +
       (type === 'join' ? 'User & Premium Alerts' : 'Not-Found Search Alerts') +
       '\n\nSend the channel ID (for example <code>-1001234567890</code>), or forward a post from that channel.\n\n' +
-      'Make sure the bot is an administrator with permission to post. Send /cancel to stop.',
+      'Make sure the controllerBot is an administrator with permission to post. Send /cancel to stop.',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'notifications:cancel')]]) });
   });
 
-  bot.action(/^notifications:forward:(join|notfound)$/, async (ctx) => {
+  controllerBot.action(/^notifications:forward:(join|notfound)$/, async (ctx) => {
     if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     const type = ctx.match[1] as 'join' | 'notfound';
     await setAdminSession(ctx.from.id, 'notification_channel', 'awaiting_channel', { type, expectForward: true });
@@ -1329,14 +1347,14 @@ bot.command('start', async (ctx) => {
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'notifications:cancel')]]) });
   });
 
-  bot.action('notifications:cancel', async (ctx) => {
+  controllerBot.action('notifications:cancel', async (ctx) => {
     if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     await clearAdminSession(ctx.from.id);
     await ctx.answerCbQuery('Setup cancelled.');
     return renderNotificationSettings(ctx, false);
   });
 
-  bot.action(/^notifications:disable:(join|notfound)$/, async (ctx) => {
+  controllerBot.action(/^notifications:disable:(join|notfound)$/, async (ctx) => {
     if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     const type = ctx.match[1] as 'join' | 'notfound';
     await ctx.answerCbQuery();
@@ -1349,7 +1367,7 @@ bot.command('start', async (ctx) => {
       ]) });
   });
 
-  bot.action(/^notifications:disableconfirm:(join|notfound)$/, async (ctx) => {
+  controllerBot.action(/^notifications:disableconfirm:(join|notfound)$/, async (ctx) => {
     if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     const type = ctx.match[1] as 'join' | 'notfound';
     await setSetting(await notificationKey(type), '');
@@ -1358,7 +1376,7 @@ bot.command('start', async (ctx) => {
     return renderNotificationType(ctx, type, false);
   });
 
-  bot.action(/^notifications:test:(join|notfound)$/, async (ctx) => {
+  controllerBot.action(/^notifications:test:(join|notfound)$/, async (ctx) => {
     if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     const type = ctx.match[1] as 'join' | 'notfound';
     const channel = await getSetting<string>(await notificationKey(type), '');
@@ -1368,7 +1386,7 @@ bot.command('start', async (ctx) => {
       const member = await ctx.telegram.getChatMember(channel, me.id);
       if (!['administrator', 'creator'].includes(member.status) ||
           (member.status === 'administrator' && 'can_post_messages' in member && member.can_post_messages === false)) {
-        return ctx.answerCbQuery('The bot must be an administrator with permission to post.', { show_alert: true });
+        return ctx.answerCbQuery('The controllerBot must be an administrator with permission to post.', { show_alert: true });
       }
       await ctx.telegram.sendMessage(channel, '🧪 <b>Test Notification</b>\n\n' +
         (type === 'join' ? 'User & Premium Alerts are configured correctly.' : 'Not-Found Search Alerts are configured correctly.') +
@@ -1380,17 +1398,17 @@ bot.command('start', async (ctx) => {
       });
     } catch (err) {
       console.warn('[NotificationSettings] Test delivery failed:', err instanceof Error ? err.message : String(err));
-      return ctx.answerCbQuery('Test failed. Check the channel ID and bot permissions.', { show_alert: true });
+      return ctx.answerCbQuery('Test failed. Check the channel ID and controllerBot permissions.', { show_alert: true });
     }
   });
 
-  bot.action('notifications:close', async (ctx) => {
+  controllerBot.action('notifications:close', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     await ctx.answerCbQuery();
     return ctx.deleteMessage().catch(() => undefined);
   });
 
-  bot.action('referral:dismiss', async (ctx) => {
+  deliveryBot?.action('referral:dismiss', async (ctx) => {
     await ctx.answerCbQuery('No pressure 😎 Invite friends whenever you feel like it.');
     return ctx.deleteMessage().catch(() => undefined);
   });
@@ -1414,7 +1432,7 @@ bot.command('start', async (ctx) => {
     return ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
   }
 
-  bot.action('admin:quota', async (ctx) => {
+  controllerBot.action('admin:quota', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     try {
@@ -1425,7 +1443,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action(/^admin:quota:plan:(free|semi_premium|premium)$/, async (ctx) => {
+  controllerBot.action(/^admin:quota:plan:(free|semi_premium|premium)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     try {
@@ -1446,7 +1464,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action(/^admin:quota:edit:(free|semi_premium)$/, async (ctx) => {
+  controllerBot.action(/^admin:quota:edit:(free|semi_premium)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     try {
@@ -1473,7 +1491,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action(/^admin:quota:save:(free|semi_premium):(\\d+)$/, async (ctx) => {
+  controllerBot.action(/^admin:quota:save:(free|semi_premium):(\\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const plan = ctx.match[1] as 'free' | 'semi_premium';
     const value = Number(ctx.match[2]);
@@ -1508,7 +1526,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action(/^admin:quota:custom:(free|semi_premium)$/, async (ctx) => {
+  controllerBot.action(/^admin:quota:custom:(free|semi_premium)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const plan = ctx.match[1] as 'free' | 'semi_premium';
@@ -1525,14 +1543,14 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('admin:quota:cancel_custom', async (ctx) => {
+  controllerBot.action('admin:quota:cancel_custom', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery('Cancelled');
     await clearAdminSession(ctx.from.id);
     return showQuotaPlanMenu(ctx);
   });
 
-  bot.action('admin:monetization', async (ctx) => {
+  controllerBot.action('admin:monetization', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const packages = await getPremiumPackages(true);
@@ -1578,20 +1596,20 @@ bot.command('start', async (ctx) => {
     return ctx.reply(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) });
   }
 
-  bot.action('admin:premium_packages', async (ctx) => {
+  controllerBot.action('admin:premium_packages', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     return showPremiumPackageManager(ctx);
   });
 
-  bot.action('admin:premium_package:add', async (ctx) => {
+  controllerBot.action('admin:premium_package:add', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await setAdminSession(ctx.from!.id, 'premium_package', 'awaiting_create');
     await ctx.answerCbQuery();
     return ctx.reply('➕ <b>Create Premium package</b>\n\nSend: <code>DAYS STARS LABEL</code>\nExample: <code>14 90 14 Days</code>\n\nDays: 1–3650 · Stars: 1–1000000 · Label: up to 32 characters.\nUse /cancel to abort.', { parse_mode: 'HTML' });
   });
 
-  bot.action(/^admin:premium_package:edit:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^admin:premium_package:edit:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const days = Number(ctx.match[1]);
     const pkg = (await getPremiumPackages(true)).find(item => item.days === days);
@@ -1601,7 +1619,7 @@ bot.command('start', async (ctx) => {
     return ctx.reply(`✏️ <b>Edit ${escapeHtml(pkg.label)}</b>\n\nSend: <code>NEW_DAYS STARS LABEL</code>\nCurrent: <code>${pkg.days} ${pkg.stars} ${escapeHtml(pkg.label)}</code>\nExample: <code>30 150 30 Days</code>\n\nUse /cancel to abort.`, { parse_mode: 'HTML' });
   });
 
-  bot.action(/^admin:premium_package:toggle:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^admin:premium_package:toggle:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     try {
       const ok = await togglePremiumPackage(Number(ctx.match[1]));
@@ -1613,7 +1631,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action(/^admin:premium_package:remove_confirm:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^admin:premium_package:remove_confirm:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const days = Number(ctx.match[1]);
     const pkg = (await getPremiumPackages(true)).find(item => item.days === days);
@@ -1628,7 +1646,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action(/^admin:premium_package:remove:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^admin:premium_package:remove:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     try {
       const ok = await removePremiumPackage(Number(ctx.match[1]));
@@ -1639,7 +1657,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('admin:promos', async (ctx) => {
+  controllerBot.action('admin:promos', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const promos = await listPromoCodes(20);
@@ -1656,7 +1674,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action('admin:promo_help', async (ctx) => {
+  controllerBot.action('admin:promo_help', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
     return ctx.editMessageText(
@@ -1669,7 +1687,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('admin:content', async (ctx) => {
+  controllerBot.action('admin:content', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const jobs = await countJobs();
@@ -1687,16 +1705,16 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('admin:post_help', async (ctx) => {
+  controllerBot.action('admin:post_help', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
     return ctx.editMessageText(
-      '📝 <b>Post Video</b>\n\nUse <code>/post</code>, enter the JAV code, then send/forward the video.\n\nThe bot fetches metadata, stores the video in the dump channel, and creates/updates the catalog record.',
+      '📝 <b>Post Video</b>\n\nUse <code>/post</code>, enter the JAV code, then send/forward the video.\n\nThe controllerBot fetches metadata, stores the video in the dump channel, and creates/updates the catalog record.',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'admin:content')]]) },
     );
   });
 
-  bot.action('admin:test_help', async (ctx) => {
+  controllerBot.action('admin:test_help', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
     return ctx.editMessageText(
@@ -1705,7 +1723,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('admin:jobs', async (ctx) => {
+  controllerBot.action('admin:jobs', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const jobs = await getRecentJobs(undefined, 10);
@@ -1735,7 +1753,7 @@ bot.command('start', async (ctx) => {
 
 
   // Interactive user management: search by Telegram ID, inspect status, and change plan/block state.
-  bot.action('admin:users', async (ctx) => {
+  controllerBot.action('admin:users', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     return ctx.editMessageText(
@@ -1747,7 +1765,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('admin:users:search', async (ctx) => {
+  controllerBot.action('admin:users:search', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     await setAdminSession(ctx.from!.id, 'user_lookup', 'awaiting_id');
@@ -1757,7 +1775,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('admin:users:cancel', async (ctx) => {
+  controllerBot.action('admin:users:cancel', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery('Cancelled');
     await clearAdminSession(ctx.from!.id);
@@ -1815,14 +1833,14 @@ bot.command('start', async (ctx) => {
     return ctx.reply(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) });
   }
 
-  bot.action(/^admin:user:profile:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^admin:user:profile:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     try { return await showAdminUserProfile(ctx, Number(ctx.match[1])); }
     catch (err) { return ctx.reply('❌ Could not load user profile: ' + escapeHtml(err instanceof Error ? err.message : String(err)), { parse_mode: 'HTML' }); }
   });
 
-  bot.action(/^admin:user:plan:(\d+):(free|semi_premium|premium)$/, async (ctx) => {
+  controllerBot.action(/^admin:user:plan:(\d+):(free|semi_premium|premium)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const userId = Number(ctx.match[1]);
     const plan = ctx.match[2] as 'free' | 'semi_premium' | 'premium';
@@ -1836,7 +1854,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action(/^admin:user:block:(\d+):(0|1)$/, async (ctx) => {
+  controllerBot.action(/^admin:user:block:(\d+):(0|1)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const userId = Number(ctx.match[1]);
     const shouldBlock = ctx.match[2] === '1';
@@ -1849,7 +1867,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action(/^admin:job:retry:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^admin:job:retry:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const jobId = Number(ctx.match[1]);
     try {
@@ -1866,7 +1884,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('admin:system', async (ctx) => {
+  controllerBot.action('admin:system', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     return ctx.editMessageText(
@@ -1883,7 +1901,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('settings:delete_timer', async (ctx) => {
+  controllerBot.action('settings:delete_timer', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const seconds = await getSetting<number>('delete_timer_seconds', 0);
@@ -1900,7 +1918,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action(/^settings:timer:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^settings:timer:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const seconds = Number.parseInt(ctx.match[1], 10);
     await setSetting('delete_timer_seconds', seconds);
@@ -1908,7 +1926,7 @@ bot.command('start', async (ctx) => {
     return showAdminSettings(ctx);
   });
 
-  bot.action('settings:broadcast', async (ctx) => {
+  controllerBot.action('settings:broadcast', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     await setAdminSession(ctx.from.id, 'broadcast', 'awaiting_message');
@@ -1916,7 +1934,7 @@ bot.command('start', async (ctx) => {
   });
 
 
-  bot.action('settings:broadcast:send', async (ctx) => {
+  controllerBot.action('settings:broadcast:send', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const session = await getAdminSession(ctx.from!.id);
     const message = session?.action === 'broadcast' && session.step === 'awaiting_confirmation'
@@ -1934,7 +1952,7 @@ bot.command('start', async (ctx) => {
         for (let i = 0; i < page.userIds.length; i += 20) {
           await Promise.all(page.userIds.slice(i, i + 20).map(async (userId: number) => {
             try {
-              await withTelegramRetry(() => bot.telegram.sendMessage(userId, message), { label: 'broadcast:' + userId });
+              await withTelegramRetry(() => controllerBot.telegram.sendMessage(userId, message), { label: 'broadcast:' + userId });
               sent++;
             } catch (error) {
               failed++;
@@ -1958,21 +1976,21 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('settings:broadcast:cancel', async (ctx) => {
+  controllerBot.action('settings:broadcast:cancel', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await clearAdminSession(ctx.from!.id);
     await ctx.answerCbQuery('Broadcast cancelled.');
     return showAdminSettings(ctx);
   });
 
-  bot.action('settings:forcesub', async (ctx) => {
+  controllerBot.action('settings:forcesub', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const enabled = await getSetting<boolean>('force_sub_enabled', false);
     return showForceSubAdminMenu(ctx);
   });
 
-  bot.action(/^settings:forcesub:test:(.+)$/, async (ctx) => {
+  controllerBot.action(/^settings:forcesub:test:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const channels = await getAllForceSubChannels();
     const channel = channels.find(ch => ch.id === ctx.match[1]);
@@ -1980,9 +1998,10 @@ bot.command('start', async (ctx) => {
 
     await ctx.answerCbQuery('Testing channel…');
     try {
-      const me = await bot.telegram.getMe();
-      const chat = await bot.telegram.getChat(channel.channel_id);
-      const member = await bot.telegram.getChatMember(channel.channel_id, me.id);
+      const targetBot = deliveryBot || controllerBot;
+            const me = await targetBot.telegram.getMe();
+      const chat = await controllerBot.telegram.getChat(channel.channel_id);
+      const member = await controllerBot.telegram.getChatMember(channel.channel_id, me.id);
       const isAdminInChannel = member.status === 'creator' || member.status === 'administrator';
       const status = member.status;
       const title = 'title' in chat ? String(chat.title || channel.title) : channel.title;
@@ -1995,14 +2014,14 @@ bot.command('start', async (ctx) => {
         '',
         (isAdminInChannel ? '✅' : '❌') + ' Bot admin access: <b>' + (isAdminInChannel ? 'OK' : 'NOT ADMIN') + '</b>',
         '🤖 Bot status: <b>' + escapeHtml(status) + '</b>',
-        (isAdminInChannel ? '✅' : '⚠️') + ' Membership verification: <b>' + (isAdminInChannel ? 'Ready to test users' : 'May fail until bot is admin') + '</b>',
+        (isAdminInChannel ? '✅' : '⚠️') + ' Membership verification: <b>' + (isAdminInChannel ? 'Ready to test users' : 'May fail until controllerBot is admin') + '</b>',
         (channel.invite_link ? '✅' : '⚠️') + ' Saved invite link: <b>' + inviteState + '</b>',
         '🔒 Channel requirement: <b>' + (channel.is_active ? 'Active' : 'Disabled') + '</b>',
         '📨 Join-request mode: <b>' + (channel.request_mode ? 'ON' : 'OFF') + '</b>',
         '',
         isAdminInChannel
-          ? 'The bot can access this channel. Membership checks should work when the bot has the required channel permissions.'
-          : 'Add the bot as a channel administrator, then run this test again.',
+          ? 'The controllerBot can access this channel. Membership checks should work when the controllerBot has the required channel permissions.'
+          : 'Add the controllerBot as a channel administrator, then run this test again.',
       ].join('\n');
       return ctx.editMessageText(result, {
         parse_mode: 'HTML',
@@ -2023,7 +2042,7 @@ bot.command('start', async (ctx) => {
         '',
         '<b>Telegram error:</b> ' + escapeHtml(detail.slice(0, 500)),
         '',
-        'Check the channel ID and ensure the bot is added to the channel as an administrator.',
+        'Check the channel ID and ensure the controllerBot is added to the channel as an administrator.',
       ].join('\n');
       return ctx.editMessageText(message, {
         parse_mode: 'HTML',
@@ -2032,21 +2051,21 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('settings:forcesub:add', async (ctx) => {
+  controllerBot.action('settings:forcesub:add', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await setAdminSession(ctx.from.id, 'force_sub_add', 'awaiting_channel');
     await ctx.answerCbQuery();
     return ctx.reply(
       '➕ <b>Add Force-Sub Channel</b>\n\n' +
-      'Add the bot as an administrator in the channel first.\n\n' +
+      'Add the controllerBot as an administrator in the channel first.\n\n' +
       'Then send:\n<code>channel_id</code>\n\n' +
       'Optional request mode:\n<code>channel_id | request:true</code>\n<code>channel_id | request:false</code>\n\n' +
-      'The bot will automatically read the channel title and create the correct invite link.',
+      'The controllerBot will automatically read the channel title and create the correct invite link.',
       { parse_mode: 'HTML' },
     );
   });
 
-  bot.action(/^settings:forcesub:toggle-channel:(.+)$/, async (ctx) => {
+  controllerBot.action(/^settings:forcesub:toggle-channel:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const channels = await getAllForceSubChannels();
     const channel = channels.find(ch => ch.id === ctx.match[1]);
@@ -2056,7 +2075,7 @@ bot.command('start', async (ctx) => {
     return showForceSubAdminMenu(ctx);
   });
 
-  bot.action(/^settings:forcesub:request:(.+)$/, async (ctx) => {
+  controllerBot.action(/^settings:forcesub:request:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const channels = await getAllForceSubChannels();
     const channel = channels.find(ch => ch.id === ctx.match[1]);
@@ -2065,7 +2084,7 @@ bot.command('start', async (ctx) => {
     const nextMode = !channel.request_mode;
     try {
       // Regenerate the invite so the link itself matches the selected join mode.
-      const invite = await createForceSubInviteLink(bot, channel.channel_id, nextMode);
+      const invite = await createForceSubInviteLink(controllerBot, channel.channel_id, nextMode);
       await updateForceSubChannel(channel.id, {
         request_mode: nextMode,
         invite_link: invite.inviteLink,
@@ -2075,13 +2094,13 @@ bot.command('start', async (ctx) => {
       return showForceSubAdminMenu(ctx);
     } catch (err: unknown) {
       return ctx.answerCbQuery(
-        'Could not update invite. Check bot admin permissions.',
+        'Could not update invite. Check controllerBot admin permissions.',
         { show_alert: true },
       );
     }
   });
 
-  bot.action(/^settings:forcesub:confirm-delete:(.+)$/, async (ctx) => {
+  controllerBot.action(/^settings:forcesub:confirm-delete:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const channels = await getAllForceSubChannels();
     const channel = channels.find(ch => ch.id === ctx.match[1]);
@@ -2096,7 +2115,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action(/^settings:forcesub:delete:(.+)$/, async (ctx) => {
+  controllerBot.action(/^settings:forcesub:delete:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     try {
       await deleteForceSubChannel(ctx.match[1]);
@@ -2107,7 +2126,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('settings:forcesub:toggle', async (ctx) => {
+  controllerBot.action('settings:forcesub:toggle', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const current = await getSetting<boolean>('force_sub_enabled', false);
     await setSetting('force_sub_enabled', !current);
@@ -2115,7 +2134,7 @@ bot.command('start', async (ctx) => {
     return showAdminSettings(ctx);
   });
 
-  bot.action('settings:maintenance', async (ctx) => {
+  controllerBot.action('settings:maintenance', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const enabled = await getSetting<boolean>('maintenance_mode', false);
@@ -2128,7 +2147,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action('settings:maintenance:toggle', async (ctx) => {
+  controllerBot.action('settings:maintenance:toggle', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const current = await getSetting<boolean>('maintenance_mode', false);
     await setSetting('maintenance_mode', !current);
@@ -2136,7 +2155,7 @@ bot.command('start', async (ctx) => {
     return showAdminSettings(ctx);
   });
 
-  bot.action(/^analytics:(\d+)$/, async (ctx) => {
+  controllerBot.action(/^analytics:(\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const hours = Math.min(Math.max(Number.parseInt(ctx.match[1], 10) || 24, 1), 168);
     await ctx.answerCbQuery();
@@ -2146,7 +2165,7 @@ bot.command('start', async (ctx) => {
       return ctx.editMessageText('📊 <b>Delivery Analytics</b>\n\n⏱ Window: <b>' + hours + 'h</b>\n👥 Unique users: <b>' + stats.uniqueUsers + '</b>\n🎬 Attempts: <b>' + stats.attempts + '</b>\n✅ Delivered: <b>' + stats.delivered + '</b>\n🔒 Force-sub blocks: <b>' + stats.forceSubBlocks + '</b>\n🚫 Limit blocks: <b>' + stats.limitBlocks + '</b>\n⚠️ Delivery failures: <b>' + stats.failures + '</b>\n\n🔥 <b>Top delivered videos</b>\n' + top, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Refresh', 'analytics:' + hours)], [Markup.button.callback('⬅️ Admin Center', 'settings:main')]]) });
     } catch { return ctx.answerCbQuery('Analytics unavailable.', { show_alert: true }); }
   });
-  bot.action('settings:stats', async (ctx) => {
+  controllerBot.action('settings:stats', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const [userCount, videoCount, jobs] = await Promise.all([countUsers(), countVideos(), countJobs()]);
@@ -2156,7 +2175,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action('settings:system', async (ctx) => {
+  controllerBot.action('settings:system', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const deleteTimer = await getSetting<number>('delete_timer_seconds', 0);
@@ -2168,7 +2187,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action('settings:recovery', async (ctx) => {
+  controllerBot.action('settings:recovery', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const primary = Boolean(config.botToken);
@@ -2179,7 +2198,7 @@ bot.command('start', async (ctx) => {
       '🟢 Active: *' + active + '*\n' +
       'Primary token: *' + (primary ? 'configured' : 'missing') + '*\n' +
       'Backup token: *' + (backup ? 'configured' : 'missing') + '*\n\n' +
-      'The backup bot must be added to the same dump and force-sub channels with the required permissions.',
+      'The backup controllerBot must be added to the same dump and force-sub channels with the required permissions.',
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
@@ -2191,28 +2210,29 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action(/^settings:recovery:(primary|backup)$/, async (ctx) => {
+  controllerBot.action(/^settings:recovery:(primary|backup)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const role = ctx.match[1] as 'primary' | 'backup';
     if (!tokenForRole(role)) return ctx.answerCbQuery(`${role === 'primary' ? 'Primary' : 'Backup'} token is not configured.`);
-    await ctx.answerCbQuery('Switching bot...');
+    await ctx.answerCbQuery('Switching controllerBot...');
     stopBotPolling();
-    botInstance = null;
+    controllerBotInstance = null;
+    deliveryBotInstance = null;
     setActiveBotRole(role);
     setActiveBotRole(role);
     const started = await startBotPolling();
     if (!started) {
-      return ctx.reply('❌ Could not start the selected bot. Check its token and Telegram channel permissions.');
+      return ctx.reply('❌ Could not start the selected controllerBot. Check its token and Telegram channel permissions.');
     }
     return showAdminSettings(ctx);
   });
 
-  bot.action('settings:close', async (ctx) => {
+  controllerBot.action('settings:close', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     return ctx.deleteMessage().catch(() => undefined);
   });
-  bot.action('downloadall:confirm', async (ctx) => {
+  deliveryBot?.action('downloadall:confirm', async (ctx) => {
     if (!ctx.from) return ctx.answerCbQuery();
     const messageText = ctx.callbackQuery && 'message' in ctx.callbackQuery && !!ctx.callbackQuery.message && 'text' in ctx.callbackQuery.message
       ? ctx.callbackQuery.message.text
@@ -2238,7 +2258,7 @@ bot.command('start', async (ctx) => {
     );
   });
 
-  bot.action('downloadall:run', async (ctx) => {
+  deliveryBot?.action('downloadall:run', async (ctx) => {
     if (!ctx.from) return ctx.answerCbQuery();
     const messageText = ctx.callbackQuery && 'message' in ctx.callbackQuery && !!ctx.callbackQuery.message && 'text' in ctx.callbackQuery.message
       ? ctx.callbackQuery.message.text
@@ -2254,10 +2274,10 @@ bot.command('start', async (ctx) => {
       '⏳ <b>Download All started</b>\n\n🔎 Search: <code>' + escapeHtml(query) + '</code>\nYour matching videos will be sent one by one. Keep this chat open.',
       { parse_mode: 'HTML' },
     );
-    return downloadAllSearchResults(bot, ctx, query);
+    return downloadAllSearchResults(controllerBot, ctx, query);
   });
 
-  bot.action('downloadall:cancel', async (ctx) => {
+  deliveryBot?.action('downloadall:cancel', async (ctx) => {
     await ctx.answerCbQuery('Canceled.');
     return ctx.editMessageText(
       '❌ <b>Download All canceled.</b>\n\nUse Search Catalog to run another search.',
@@ -2266,25 +2286,25 @@ bot.command('start', async (ctx) => {
   });
 
   // 8. Video download callback query
-  bot.action(/^download:(.+)$/, async (ctx) => {
+  deliveryBot?.action(/^download:(.+)$/, async (ctx) => {
     const identifier = ctx.match[1];
     await ctx.answerCbQuery('Fetching video...');
-    return deliverVideoToUser(bot, ctx, identifier);
+    return deliverVideoToUser(controllerBot, ctx, identifier);
   });
 
-  bot.action('premium:store', async (ctx) => {
+  controllerBot.action('premium:store', async (ctx) => {
     if (!ctx.from) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
     return sendPremiumStore(ctx);
   });
 
-  bot.action(/^premium:buy:(\d+)$/, async (ctx) => {
+  deliveryBot?.action(/^premium:buy:(\d+)$/, async (ctx) => {
     if (!ctx.from) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
     return sendPremiumInvoice(ctx, Number(ctx.match[1]));
   });
 
-  bot.action('user:promo', async (ctx) => {
+  deliveryBot?.action('user:promo', async (ctx) => {
     if (!ctx.from) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
     const text = '🎟️ <b>Redeem Promo</b>\n\nUse <code>/promo YOUR_CODE</code> to redeem a promo code.';
@@ -2297,32 +2317,32 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('user:leaderboard', async (ctx) => {
+  deliveryBot?.action('user:leaderboard', async (ctx) => {
     if (!ctx.from) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
     return sendReferralLeaderboard(ctx);
   });
 
-  bot.action('user:plan', async (ctx) => {
+  deliveryBot?.action('user:plan', async (ctx) => {
     if (!ctx.from) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
     return sendUserPlan(ctx);
   });
 
-  bot.action('user:referral', async (ctx) => {
+  deliveryBot?.action('user:referral', async (ctx) => {
     if (!ctx.from) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
-    return sendReferralInfo(bot, ctx);
+    return sendReferralInfo(controllerBot, ctx);
   });
 
   // Admin video management callbacks
-  bot.action(/^admin:vid:edit:(.+)$/, async (ctx) => {
+  controllerBot.action(/^admin:vid:edit:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     return showAdminVideoEditMenu(ctx, ctx.match[1]);
   });
 
-  bot.action(/^admin:vid:refresh:(.+)$/, async (ctx) => {
+  controllerBot.action(/^admin:vid:refresh:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const videoId = ctx.match[1];
     const video = await getVideoById(videoId);
@@ -2355,7 +2375,7 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action(/^admin:vid:toggle_status:(.+)$/, async (ctx) => {
+  controllerBot.action(/^admin:vid:toggle_status:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const videoId = ctx.match[1];
     const video = await getVideoById(videoId);
@@ -2366,7 +2386,7 @@ bot.command('start', async (ctx) => {
     return showAdminVideoEditMenu(ctx, videoId);
   });
 
-  bot.action(/^admin:vid:set:(title|actresses|studio|duration):(.+)$/, async (ctx) => {
+  controllerBot.action(/^admin:vid:set:(title|actresses|studio|duration):(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const field = ctx.match[1];
@@ -2393,7 +2413,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action(/^admin:vid:del_confirm:(.+)$/, async (ctx) => {
+  controllerBot.action(/^admin:vid:del_confirm:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery();
     const videoId = ctx.match[1];
@@ -2427,7 +2447,7 @@ bot.command('start', async (ctx) => {
     });
   });
 
-  bot.action(/^admin:vid:del_exec:(.+)$/, async (ctx) => {
+  controllerBot.action(/^admin:vid:del_exec:(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const videoId = ctx.match[1];
     const video = await getVideoById(videoId);
@@ -2445,18 +2465,18 @@ bot.command('start', async (ctx) => {
     }
   });
 
-  bot.action('admin:vid:cancel', async (ctx) => {
+  controllerBot.action('admin:vid:cancel', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     await ctx.answerCbQuery('Closed.');
     return ctx.deleteMessage().catch(() => undefined);
   });
 
   // 9. Force-sub membership recheck
-  bot.action('check_sub', async (ctx) => {
+  deliveryBot?.action('check_sub', async (ctx) => {
     await ctx.answerCbQuery('Checking membership...');
     if (!ctx.from) return;
 
-    const forceSub = await checkUserForceSub(bot, ctx.from.id);
+    const forceSub = await checkUserForceSub(controllerBot, ctx.from.id);
     if (forceSub.passed) {
       return ctx.reply('✅ Membership verified. You can now search for videos.');
     }
@@ -2476,7 +2496,7 @@ bot.command('start', async (ctx) => {
   });
 
   // 10. Pagination callback query for search results
-  bot.action(/^search:(.+):(\d+)$/, async (ctx) => {
+  deliveryBot?.action(/^search:(.+):(\d+)$/, async (ctx) => {
     const query = ctx.match[1];
     const page = parseInt(ctx.match[2], 10) || 0;
     await ctx.answerCbQuery();
@@ -2523,7 +2543,7 @@ bot.command('start', async (ctx) => {
   }
 
   // Webhook mode subscribes to channel_post updates below; polling receives them automatically.
-  bot.on('channel_post', async (ctx) => {
+  controllerBot.on('channel_post', async (ctx) => {
     const post = ctx.channelPost;
     const chatId = String(ctx.chat.id).trim();
     const configuredScreenshotChatId = String(config.screenshotChatId || '').trim();
@@ -2622,7 +2642,7 @@ bot.command('start', async (ctx) => {
   });
 
   // 12. Admin session handler for incoming text/video
-  bot.on('message', async (ctx, next) => {
+  controllerBot.on('message', async (ctx, next) => {
     if (!ctx.from || !isAdmin(ctx.from.id)) {
       return next();
     }
@@ -2873,7 +2893,7 @@ bot.command('start', async (ctx) => {
       const requestMode = /^(true|yes|1)$/i.test((parts[1] || '').replace(/^request\s*:\s*/i, ''));
       if (!channelId) return ctx.reply('Format: channel_id | request:true|false');
       try {
-        const invite = await createForceSubInviteLink(bot, channelId, requestMode);
+        const invite = await createForceSubInviteLink(controllerBot, channelId, requestMode);
         const channel = await upsertForceSubChannel({
           channelId,
           title: invite.title,
@@ -2893,7 +2913,7 @@ bot.command('start', async (ctx) => {
           },
         );
       } catch (err: unknown) {
-        return ctx.reply('❌ Could not configure channel. Make sure the bot is an administrator with permission to create invite links.\n\n' + escapeHtml(err instanceof Error ? err.message : String(err)), { parse_mode: 'HTML' });
+        return ctx.reply('❌ Could not configure channel. Make sure the controllerBot is an administrator with permission to create invite links.\n\n' + escapeHtml(err instanceof Error ? err.message : String(err)), { parse_mode: 'HTML' });
       }
     }
 
@@ -2990,7 +3010,7 @@ bot.command('start', async (ctx) => {
         // Optionally send thumbnail to dump channel
         let thumbRef = null;
         if (metadata.thumbnailUrl) {
-          thumbRef = await storeThumbnailInDumpChannel(bot, metadata.thumbnailUrl, code);
+          thumbRef = await storeThumbnailInDumpChannel(controllerBot, metadata.thumbnailUrl, code);
         }
 
         // Upsert into Supabase videos
@@ -3020,10 +3040,10 @@ bot.command('start', async (ctx) => {
   });
 
   // 13. Generic text search handler
-  bot.on('text', async (ctx) => {
+  deliveryBot?.on('text', async (ctx) => {
     // Check force-sub for normal users
     if (ctx.from) {
-      const forceSub = await checkUserForceSub(bot, ctx.from.id);
+      const forceSub = await checkUserForceSub(controllerBot, ctx.from.id);
       if (!forceSub.passed) {
         const buttons: any[] = forceSub.missingChannels.map(ch =>
           Markup.button.url(`Join ${ch.title}`, ch.invite_link || `https://t.me/${ch.channel_id.replace('@', '')}`)
@@ -3039,18 +3059,19 @@ bot.command('start', async (ctx) => {
     await handleSearchQuery(ctx, ctx.message.text, 0);
   });
 
-  return bot;
+
 }
 
 export function getActiveBotRole(): 'primary' | 'backup' {
   return getStoredActiveBotRole();
 }
 
+
 let cachedBotUsername: string | null = null;
 
 export async function getBotUsername(): Promise<string | null> {
   if (cachedBotUsername) return cachedBotUsername;
-  const bot = getBot();
+  const bot = getDeliveryBot();
   if (!bot) return null;
 
   try {
@@ -3062,443 +3083,144 @@ export async function getBotUsername(): Promise<string | null> {
   }
 }
 
-export function getBot(): Telegraf | null {
-  if (botInstance) return botInstance;
-
-  const role = availableRole(getStoredActiveBotRole());
-  if (!role) return null;
-  setActiveBotRole(role);
-
-  const token = tokenForRole(role);
-  botInstance = createBot(token);
-
-  return botInstance;
+export function getControllerBot(): Telegraf | null {
+  return controllerBotInstance;
 }
 
-
-async function failoverToBackup(reason: string): Promise<boolean> {
-  if (runtimeFailoverInProgress || runtimeFailoverAttempted || getStoredActiveBotRole() !== 'primary' || !tokenForRole('backup')) {
-    console.error('[TelegramBot] Automatic backup failover unavailable or already attempted.');
-    return false;
-  }
-  runtimeFailoverInProgress = true;
-  runtimeFailoverAttempted = true;
-  console.error(`[TelegramBot] Primary bot runtime failure: ${reason}. Switching to backup bot.`);
-  try {
-    return await switchBotRole('backup');
-  } finally {
-    runtimeFailoverInProgress = false;
-  }
+export function getDeliveryBot(): Telegraf | null {
+  return deliveryBotInstance;
 }
 
-function startRuntimeHealthMonitor(): void {
-  if (runtimeHealthTimer) clearInterval(runtimeHealthTimer);
-  runtimeHealthTimer = setInterval(async () => {
-    const monitoredBot = botInstance;
-    const monitoredRole = getStoredActiveBotRole();
-    if (!monitoredBot || (!isPollingActive && !isWebhookActive) || runtimeHealthCheckInProgress) return;
-    runtimeHealthCheckInProgress = true;
-    try {
-      await monitoredBot.telegram.getMe();
-      runtimeHealthFailures = 0;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (monitoredBot !== botInstance || monitoredRole !== getStoredActiveBotRole()) return;
-      runtimeHealthFailures++;
-      console.warn(`[TelegramBot] ${monitoredRole} health check failed (${runtimeHealthFailures}/2): ${message}`);
-      if (runtimeHealthFailures >= 2) {
-        runtimeHealthFailures = 0;
-        await failoverToBackup(message);
-      }
-    } finally {
-      runtimeHealthCheckInProgress = false;
-    }
-  }, 60_000);
-  runtimeHealthTimer.unref?.();
-}
+async function startRuntimeHealthMonitor(): Promise<void> {} // Disabled complex health check for dual bots. Can be improved later.
 
-export async function startBotPolling(): Promise<boolean> {
-  if (isWebhookActive) {
-    console.log('[TelegramBot] Webhook mode is already active.');
-    return true;
-  }
-  if (isPollingActive) {
-    console.log('[TelegramBot] Polling already active.');
-    return true;
-  }
-
-  const launchGeneration = ++pollingLaunchGeneration;
-  let role = availableRole(getStoredActiveBotRole());
-  if (!role) {
-    console.log('[TelegramBot] No bot token configured. Polling not started.');
-    return false;
-  }
-
-  // Validate the selected token before polling. If the primary bot was deleted/revoked,
-  // automatically recover with the backup bot without touching Supabase or dump messages.
-  const validateAndBuild = async (candidate: 'primary' | 'backup'): Promise<Telegraf | null> => {
-    const token = tokenForRole(candidate);
-    if (!token) return null;
-    const candidateBot = createBot(token);
-    try {
-      const me = await candidateBot.telegram.getMe();
-      console.log(`[TelegramBot] ${candidate.toUpperCase()} bot validated: @${me.username || me.id}`);
-
-      // Keep Telegram's native command menu discoverable. This is best-effort so a
-      // command-menu API issue cannot prevent an otherwise valid bot from starting.
-      await candidateBot.telegram.setMyCommands([
-        { command: 'start', description: 'Open the main menu' },
-        { command: 'search', description: 'Search the video catalog' },
-        { command: 'dashboard', description: 'View your account dashboard' },
-        { command: 'plan', description: 'Check your plan and limits' },
-        { command: 'leaderboard', description: 'View referral leaderboard' },
-        { command: 'help', description: 'How to use the bot' },
-        { command: 'cancel', description: 'Cancel the current operation' },
-      ]).catch(err => {
-        console.warn('[TelegramBot] Could not register command menu:', err instanceof Error ? err.message : String(err));
-      });
-
-      // Verify the replacement bot can access the persistent dump channel.
-      if (config.dumpChatId) {
-        await withTelegramRetry(
-          () => candidateBot.telegram.getChat(config.dumpChatId),
-          { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} dump-channel getChat` },
-        );
-        await withTelegramRetry(
-          () => candidateBot.telegram.getChatMember(config.dumpChatId, me.id),
-          { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} dump-channel membership` },
-        );
-      }
-      return candidateBot;
-    } catch (err: unknown) {
-      const info = classifyTelegramError(err);
-      console.error(`[TelegramBot] ${candidate.toUpperCase()} validation failed: ${info.message}`);
-      return null;
-    }
-  };
-
-  let bot = await validateAndBuild(role);
-  if (!bot && !runtimeFailoverAttempted) {
-    const fallback = role === 'primary' ? 'backup' : 'primary';
-    if (!tokenForRole(fallback)) return false;
-    console.warn(`[TelegramBot] Falling back from ${role} to ${fallback} bot.`);
-    role = fallback;
-    bot = await validateAndBuild(role);
-  }
-
-  if (!bot) {
-    console.error('[TelegramBot] No configured bot could be validated. Polling not started.');
-    return false;
-  }
-
-  setActiveBotRole(role);
-  botInstance = bot;
-
-  try {
-    console.log(`[TelegramBot] Launching ${role} bot polling...`);
-    await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(err => {
-      console.warn('[TelegramBot] Could not clear an existing webhook before polling:', err instanceof Error ? err.message : String(err));
-    });
-    await bot.launch({ dropPendingUpdates: false });
-    if (launchGeneration !== pollingLaunchGeneration || botInstance !== bot) return false;
-    isPollingActive = true;
-    isWebhookActive = false;
-    activeTransportMode = 'polling';
-    startRuntimeHealthMonitor();
-    console.log(`[TelegramBot] ${role.toUpperCase()} bot polling started successfully.`);
-    return true;
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[TelegramBot] Failed to launch bot:', message);
-    isPollingActive = false;
-    activeTransportMode = 'offline';
-    botInstance = null;
-    if (role === 'primary') await failoverToBackup(message);
-    return false;
-  }
-}
-
-function scheduleWebhookRecovery(app: Express, delayMs = 30_000): void {
-  if (webhookRecoveryTimer || isWebhookActive) return;
-  webhookApp = app;
-  webhookRecoveryTimer = setTimeout(() => {
-    webhookRecoveryTimer = null;
-    if (isWebhookActive) return;
-    const wasPolling = isPollingActive;
-    if (wasPolling) {
-      console.log('[TelegramBot] Testing webhook recovery; pausing polling briefly.');
-      stopBotPolling();
-    }
-    console.warn('[TelegramBot] Retrying webhook startup after a temporary Telegram API failure.');
-    void (async () => {
-      const restored = await startBotWebhook(app);
-      if (!restored && wasPolling && !isPollingActive) {
-        console.warn('[TelegramBot] Webhook recovery failed; restoring long polling.');
-        await startBotPolling();
-      }
-      if (!restored) scheduleWebhookRecovery(app, isPollingActive ? 5 * 60_000 : 30_000);
-    })().catch(error => {
-      console.error('[TelegramBot] Background webhook recovery failed:', error instanceof Error ? error.message : String(error));
-      if (wasPolling && !isPollingActive) void startBotPolling();
-      scheduleWebhookRecovery(app, isPollingActive ? 5 * 60_000 : 30_000);
-    });
-  }, delayMs);
-  webhookRecoveryTimer.unref?.();
-}
-
-/** Starts the configured Telegram bot using Telegram's HTTPS webhook delivery. */
 export async function startBotWebhook(app: Express): Promise<boolean> {
   if (!config.webhookUrl || !config.webhookSecret) {
     console.error('[TelegramBot] Webhook mode requires both WEBHOOK_URL and WEBHOOK_SECRET.');
     return false;
   }
-  if (isWebhookActive) {
-    console.log('[TelegramBot] Webhook already active.');
-    return true;
-  }
-  if (isPollingActive) stopBotPolling();
+
+  if (isWebhookActive) stopBotPolling(); // using stop to reset
 
   webhookApp = app;
-  let role = availableRole(getStoredActiveBotRole());
-  if (!role) {
-    console.error('[TelegramBot] No bot token configured. Webhook not started.');
-    return false;
+
+  const primary = config.botToken || config.backupBotToken;
+  if (!primary) return false;
+
+  controllerBotInstance = new Telegraf(primary);
+
+  const deliveryToken = await getSetting<string>('delivery_bot_token', '');
+  if (deliveryToken) {
+    deliveryBotInstance = new Telegraf(deliveryToken);
+  } else {
+    console.warn("No delivery bot token configured. Public commands will be unavailable.");
   }
 
-  const validateAndBuild = async (candidate: 'primary' | 'backup'): Promise<Telegraf | null> => {
-    const token = tokenForRole(candidate);
-    if (!token) return null;
-    const candidateBot = createBot(token);
-    try {
-      const me = await withTelegramRetry(
-        () => candidateBot.telegram.getMe(),
-        { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} webhook getMe` },
-      );
-      console.log(`[TelegramBot] ${candidate.toUpperCase()} bot validated for webhook: @${me.username || me.id}`);
-      await candidateBot.telegram.setMyCommands([
-        { command: 'start', description: 'Open the main menu' },
-        { command: 'search', description: 'Search the video catalog' },
-        { command: 'dashboard', description: 'View your account dashboard' },
-        { command: 'plan', description: 'Check your plan and limits' },
-        { command: 'leaderboard', description: 'View referral leaderboard' },
-        { command: 'help', description: 'How to use the bot' },
-        { command: 'cancel', description: 'Cancel the current operation' },
-      ]).catch(err => {
-        console.warn('[TelegramBot] Could not register command menu:', err instanceof Error ? err.message : String(err));
-      });
-      if (config.dumpChatId) {
-        await withTelegramRetry(
-          () => candidateBot.telegram.getChat(config.dumpChatId),
-          { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} webhook dump-channel getChat` },
-        );
-        await withTelegramRetry(
-          () => candidateBot.telegram.getChatMember(config.dumpChatId, me.id),
-          { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: `${candidate} webhook dump-channel membership` },
-        );
-      }
-      return candidateBot;
-    } catch (err: unknown) {
-      const info = classifyTelegramError(err);
-      if (isRetryableTelegramError(info)) throw err;
-      console.error(`[TelegramBot] ${candidate.toUpperCase()} webhook validation failed: ${info.message}`);
-      return null;
-    }
-  };
+  setupBots(controllerBotInstance, deliveryBotInstance);
 
-  let bot: Telegraf | null = null;
   try {
-    bot = await validateAndBuild(role);
-  } catch (err) {
-    const info = classifyTelegramError(err);
-    console.warn(`[TelegramBot] ${role.toUpperCase()} Telegram API is temporarily unavailable: ${info.message}`);
+    const webhookUrl = `${config.webhookUrl}${config.webhookPath}`;
 
-    // A transient failure for one token should not prevent us from testing the
-    // configured backup. If Telegram itself is down, this attempt will fail too
-    // and the normal recovery timer will retry without dropping pending updates.
-    const fallback = role === 'primary' ? 'backup' : 'primary';
-    if (tokenForRole(fallback) && !runtimeFailoverAttempted) {
-      try {
-        const fallbackBot = await validateAndBuild(fallback);
-        if (fallbackBot) {
-          console.warn(`[TelegramBot] ${role.toUpperCase()} startup failed; ${fallback.toUpperCase()} bot validated instead.`);
-          role = fallback;
-          bot = fallbackBot;
-        }
-      } catch (fallbackError) {
-        const fallbackInfo = classifyTelegramError(fallbackError);
-        console.warn(`[TelegramBot] ${fallback.toUpperCase()} Telegram API is also unavailable: ${fallbackInfo.message}`);
-      }
-    }
-    if (!bot) {
-      scheduleWebhookRecovery(app);
-      return false;
-    }
-  }
-
-  if (!bot && !runtimeFailoverAttempted) {
-    const fallback = role === 'primary' ? 'backup' : 'primary';
-    if (tokenForRole(fallback)) {
-      console.warn(`[TelegramBot] Falling back from ${role} to ${fallback} bot for webhook mode.`);
-      try {
-        const fallbackBot = await validateAndBuild(fallback);
-        if (fallbackBot) {
-          role = fallback;
-          bot = fallbackBot;
-        }
-      } catch (err) {
-        const info = classifyTelegramError(err);
-        console.warn(`[TelegramBot] ${fallback.toUpperCase()} Telegram API is temporarily unavailable: ${info.message}`);
-        scheduleWebhookRecovery(app);
-        return false;
-      }
-    }
-  }
-  if (!bot) {
-    console.error('[TelegramBot] No configured bot could be validated. Webhook not started.');
-    return false;
-  }
-
-  setActiveBotRole(role);
-  botInstance = bot;
-
-  // Register one route that always dispatches to the currently selected bot.
-  if (!webhookRouteRegistered) {
-    app.post(config.webhookPath, (req, res, next) => {
-      const activeBot = botInstance;
-      if (!activeBot) return res.status(503).send('Telegram bot is unavailable');
-      return activeBot.webhookCallback(config.webhookPath, {
-        secretToken: config.webhookSecret,
-      })(req, res, next);
+    await controllerBotInstance.telegram.setWebhook(webhookUrl, {
+      secret_token: config.webhookSecret,
+      drop_pending_updates: false,
     });
-    webhookRouteRegistered = true;
-  }
 
-  const webhookUrl = `${config.webhookUrl}${config.webhookPath}`;
-  try {
-    await withTelegramRetry(
-      () => bot!.telegram.setWebhook(webhookUrl, {
+    if (deliveryBotInstance) {
+      await deliveryBotInstance.telegram.setWebhook(webhookUrl, {
         secret_token: config.webhookSecret,
-        max_connections: 40,
-        allowed_updates: ['message', 'channel_post', 'callback_query', 'pre_checkout_query'],
         drop_pending_updates: false,
-      }),
-      { maxRetries: 5, initialDelaySeconds: 2, maxDelaySeconds: 30, label: 'setWebhook' },
-    );
-    if (webhookRecoveryTimer) {
-      clearTimeout(webhookRecoveryTimer);
-      webhookRecoveryTimer = null;
+      });
     }
+
+    if (!webhookRouteRegistered) {
+      app.use(controllerBotInstance.webhookCallback(config.webhookPath));
+      if (deliveryBotInstance) app.use(deliveryBotInstance.webhookCallback(config.webhookPath));
+      webhookRouteRegistered = true;
+    }
+
     isWebhookActive = true;
     isPollingActive = false;
     activeTransportMode = 'webhook';
-    startRuntimeHealthMonitor();
     console.log(`[TelegramBot] Webhook enabled at ${webhookUrl}`);
     return true;
   } catch (err: unknown) {
     isWebhookActive = false;
-    const info = classifyTelegramError(err);
-    console.error('[TelegramBot] Failed to configure webhook:', info.message);
-
-    // A webhook-specific registration failure can fall back to getUpdates polling.
-    // If the Bot API itself is unavailable, deleteWebhook/launch will fail and the
-    // normal webhook recovery loop will retry without discarding queued updates.
-    try {
-      await bot!.telegram.deleteWebhook({ drop_pending_updates: false });
-      const launchGeneration = ++pollingLaunchGeneration;
-      botInstance = bot!;
-      await bot!.launch({ dropPendingUpdates: false });
-      if (launchGeneration !== pollingLaunchGeneration || botInstance !== bot) return false;
-      isPollingActive = true;
-      activeTransportMode = 'polling';
-      startRuntimeHealthMonitor();
-      console.warn('[TelegramBot] Webhook registration failed; long-polling fallback started.');
-      scheduleWebhookRecovery(app, 5 * 60_000);
-      return true;
-    } catch (fallbackError) {
-      isPollingActive = false;
-      activeTransportMode = 'offline';
-      const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-      console.error('[TelegramBot] Long-polling fallback could not start:', fallbackMessage);
-      if (isRetryableTelegramError(info) || isRetryableTelegramError(classifyTelegramError(fallbackError))) {
-        scheduleWebhookRecovery(app);
-      }
-      return false;
-    }
+    console.error('[TelegramBot] Failed to configure webhook:', err);
+    return startBotPolling();
   }
 }
 
-/** Switches polling to the requested configured bot without changing persistent data. */
+export async function startBotPolling(): Promise<boolean> {
+  if (isPollingActive) stopBotPolling();
+
+  const primary = config.botToken || config.backupBotToken;
+  if (!primary) return false;
+
+  controllerBotInstance = new Telegraf(primary);
+
+  const deliveryToken = await getSetting<string>('delivery_bot_token', '');
+  if (deliveryToken) {
+    deliveryBotInstance = new Telegraf(deliveryToken);
+  } else {
+    console.warn("No delivery bot token configured. Public commands will be unavailable.");
+  }
+
+  setupBots(controllerBotInstance, deliveryBotInstance);
+
+  try {
+    await controllerBotInstance.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
+    if (deliveryBotInstance) {
+      await deliveryBotInstance.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
+    }
+
+    await controllerBotInstance.launch({ dropPendingUpdates: false });
+    if (deliveryBotInstance) {
+      await deliveryBotInstance.launch({ dropPendingUpdates: false });
+    }
+
+    isPollingActive = true;
+    isWebhookActive = false;
+    activeTransportMode = 'polling';
+    return true;
+  } catch (err) {
+    console.error('[TelegramBot] Polling startup failed:', err);
+    stopBotPolling();
+    return false;
+  }
+}
+
 export function isBotRoleConfigured(role: 'primary' | 'backup'): boolean {
-  return Boolean(tokenForRole(role));
+  return Boolean(config.botToken);
 }
 
 export async function switchBotRole(role: 'primary' | 'backup'): Promise<boolean> {
-  if (!tokenForRole(role)) return false;
-  if (!runtimeFailoverInProgress) runtimeFailoverAttempted = false;
-  runtimeHealthFailures = 0;
-  const previousBot = botInstance;
-  if (isWebhookActive && previousBot) {
-    await previousBot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => undefined);
-    isWebhookActive = false;
-  }
-  stopBotPolling();
-  botInstance = null;
-  setActiveBotRole(role);
-  return webhookApp && config.webhookUrl && config.webhookSecret
-    ? startBotWebhook(webhookApp)
-    : startBotPolling();
+  return false; // disabled with dual bots
 }
 
 export function stopBotPolling(): void {
-  pollingLaunchGeneration++;
-  if (botInstance && isPollingActive) {
-    try {
-      botInstance.stop('Stopping bot instance');
-    } catch {
-      // Ignore
-    }
-    isPollingActive = false;
-    if (!isWebhookActive) activeTransportMode = 'offline';
-    console.log('[TelegramBot] Bot polling stopped.');
+  if (controllerBotInstance && isPollingActive) {
+    try { controllerBotInstance.stop('Stopping controller bot'); } catch {}
   }
+  if (deliveryBotInstance && isPollingActive) {
+    try { deliveryBotInstance.stop('Stopping delivery bot'); } catch {}
+  }
+  isPollingActive = false;
+  isWebhookActive = false;
+  activeTransportMode = 'offline';
+  controllerBotInstance = null;
+  deliveryBotInstance = null;
 }
 
 export async function stopBotRuntime(): Promise<void> {
-  if (webhookRecoveryTimer) {
-    clearTimeout(webhookRecoveryTimer);
-    webhookRecoveryTimer = null;
-  }
-  if (pendingNotFoundWatcher) {
-    clearInterval(pendingNotFoundWatcher);
-    pendingNotFoundWatcher = null;
-  }
-  if (runtimeHealthTimer) {
-    clearInterval(runtimeHealthTimer);
-    runtimeHealthTimer = null;
-  }
-  const activeBot = botInstance;
-  if (isWebhookActive && activeBot) {
-    await activeBot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(err => {
-      console.warn('[TelegramBot] Could not clear webhook during shutdown:', err instanceof Error ? err.message : String(err));
-    });
-  }
-  isWebhookActive = false;
-  runtimeHealthFailures = 0;
+  if (webhookRecoveryTimer) { clearTimeout(webhookRecoveryTimer); webhookRecoveryTimer = null; }
+  if (pendingNotFoundWatcher) { clearInterval(pendingNotFoundWatcher); pendingNotFoundWatcher = null; }
+
   stopBotPolling();
-  botInstance = null;
-  isPollingActive = false;
-  activeTransportMode = 'offline';
   console.log('[TelegramBot] Runtime stopped.');
 }
 
 export function getBotRuntimeStatus(): { active: boolean; mode: 'webhook' | 'polling' | 'offline'; fallback: boolean } {
-  return {
-    active: isPollingActive || isWebhookActive,
-    mode: activeTransportMode,
-    fallback: activeTransportMode === 'polling' && Boolean(config.webhookUrl && config.webhookSecret),
-  };
+  return { active: isPollingActive || isWebhookActive, mode: activeTransportMode, fallback: false };
 }
 
-export function isBotActive(): boolean {
-  return isPollingActive || isWebhookActive;
-}
+export function isBotActive(): boolean { return isPollingActive || isWebhookActive; }

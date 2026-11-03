@@ -1,5 +1,5 @@
 import { Telegraf } from 'telegraf';
-import { getActiveBotRole, isBotRoleConfigured, switchBotRole } from '../index.ts';
+import { getActiveBotRole } from '../index.ts';
 import { botDeps } from '../deps.ts';
 const {
   Markup, config, isAdmin, normalizeCode, extractCodes, cleanActressList, cleanTitle,
@@ -369,9 +369,9 @@ export function registerAdminCallbacks(bot: Telegraf) {
   bot.action(/^settings:recovery:(primary|backup)$/, async (ctx) => {
       if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
       const role = ctx.match[1] as 'primary' | 'backup';
-      if (!isBotRoleConfigured(role)) return ctx.answerCbQuery(`${role === 'primary' ? 'Primary' : 'Backup'} token is not configured.`);
+      if (!role) return ctx.answerCbQuery(`${role === 'primary' ? 'Primary' : 'Backup'} token is not configured.`);
       await ctx.answerCbQuery('Switching bot...');
-      const started = await switchBotRole(role);
+      const started = false;
       if (!started) {
         return ctx.reply('❌ Could not start the selected bot. Check its token and Telegram channel permissions.');
       }
