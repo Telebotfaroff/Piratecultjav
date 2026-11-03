@@ -60,6 +60,28 @@ export async function resumeHistoricalIndexer(): Promise<void> {
 }
 
 
+export interface RecentHistoricalJob {
+  id: number;
+  source_chat_id: string;
+  status: string;
+  scanned_count: number;
+  indexed_count: number;
+  failed_count: number;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listRecentHistoricalJobs(limit = 5): Promise<RecentHistoricalJob[]> {
+  const { data, error } = await getSupabase()
+    .from('historical_index_jobs')
+    .select('id, source_chat_id, status, scanned_count, indexed_count, failed_count, error, created_at, updated_at')
+    .order('created_at', { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 20));
+  if (error) throw new Error(`Failed loading recent historical jobs: ${error.message}`);
+  return (data || []) as RecentHistoricalJob[];
+}
+
 export interface HistoricalSource {
   id: string;
   source_chat_id: string;
