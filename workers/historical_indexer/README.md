@@ -6,7 +6,8 @@ This worker scans historical Telegram channel messages using a dedicated Pyrogra
 
 - `DATABASE_URL`: PostgreSQL connection string for the existing Supabase database.
 - `API_ID` and `API_HASH`: Telegram application credentials from my.telegram.org.
-- `SESSION_ENCRYPTION_KEY`: Fernet URL-safe base64 key used to decrypt the session stored in `private_runtime_secrets` under `pyrogram_session_string`.
+- `PYROGRAM_SESSION_STRING` (recommended): Pyrogram user session string supplied directly through Render Environment settings. When set, it takes priority and the worker does not query the encrypted session secret.
+- `SESSION_ENCRYPTION_KEY` (fallback only): Fernet URL-safe base64 key used to decrypt the session stored in `private_runtime_secrets` under `pyrogram_session_string`, used only when `PYROGRAM_SESSION_STRING` is empty.
 - `INDEXER_WORKER_ID` (optional): stable worker label for lease ownership.
 - `POLL_INTERVAL_SECONDS` (optional, default 5).
 - `BATCH_SIZE` (optional, default 50).
@@ -15,7 +16,7 @@ The worker never accepts a plaintext session string from command-line arguments 
 
 ## Enable in the single Render service
 
-Set `HISTORICAL_INDEXER_ENABLED=true` only after the required environment variables and encrypted session are configured. The Docker image installs these Python dependencies; the Node.js server supervises the worker and restarts it with backoff. Leave it disabled during initial deployment if no Pyrogram session has been configured yet.
+Set `HISTORICAL_INDEXER_ENABLED=true` after `DATABASE_URL`, `API_ID`, `API_HASH`, and either `PYROGRAM_SESSION_STRING` or the encrypted Supabase session plus `SESSION_ENCRYPTION_KEY` are configured. The Render environment session takes priority. The Docker image installs these Python dependencies; the Node.js server supervises the worker and restarts it with backoff. Leave it disabled during initial deployment if no Pyrogram session has been configured yet.
 
 ## Run locally
 
