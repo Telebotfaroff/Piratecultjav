@@ -50,6 +50,15 @@ def json_list(value: Any, fallback: list[str]) -> list[str]:
     return fallback
 
 
+def as_utc_datetime(value: datetime | None) -> datetime | None:
+    """Return a timezone-aware UTC datetime for Telegram and PostgreSQL comparisons."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def media_details(message: Message, allowed: set[str]) -> dict[str, Any] | None:
     for media_type, attribute in MEDIA_ATTRIBUTES.items():
         if media_type not in allowed:
@@ -67,11 +76,7 @@ def media_details(message: Message, allowed: set[str]) -> dict[str, Any] | None:
             "mime_type": getattr(item, "mime_type", None),
             "file_size": getattr(item, "file_size", None),
             "media_group_id": message.media_group_id,
-            "message_date": (
-                message.date.replace(tzinfo=timezone.utc)
-                if message.date and message.date.tzinfo is None
-                else message.date
-            ),
+            "message_date": as_utc_datetime(message.date),
             "metadata": {
                 "has_caption": bool(caption),
                 "message_id": message.id,
@@ -260,16 +265,24 @@ class HistoricalIndexer:
                 source_chat_id, limit=0, offset_id=cursor
             ):
                 if self.stop_event.is_set():
+                    # Release immediately; the uncommitted batch will safely replay from its checkpoint.
+                    await self.release_job(job_id)
                     return
                 if job["start_message_id"] and message.id < job["start_message_id"]:
                     break
                 if job["end_message_id"] and message.id > job["end_message_id"]:
                     continue
 
-                message_date = message.date
-                if job["start_date"] and message_date < job["start_date"]:
+                message_date = as_utc_datetime(message.date)
+                start_date = as_utc_datetime(job["start_date"])
+                end_date = as_utc_datetime(job["end_date"])
+                if message_date is None:
+                    scanned += 1
+                    last_message_id = message.id
+                    skipped += 1
+                elif start_date and message_date < start_date:
                     break
-                if job["end_date"] and message_date > job["end_date"]:
+                elif end_date and message_date > end_date:
                     last_message_id = message.id
                     scanned += 1
                     pending += 1
