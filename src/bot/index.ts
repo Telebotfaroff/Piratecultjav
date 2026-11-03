@@ -25,6 +25,7 @@ import { registerUserTrackingMiddleware } from './middleware/userTracking.ts';
 let botInstance: Telegraf | null = null;
 let isPollingActive = false;
 let isWebhookActive = false;
+let activeTransportMode: 'webhook' | 'polling' | 'offline' = 'offline';
 let webhookApp: Express | null = null;
 let webhookRouteRegistered = false;
 let webhookRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3207,6 +3208,8 @@ export async function startBotPolling(): Promise<boolean> {
       if (role === 'primary') await failoverToBackup(message);
     });
     isPollingActive = true;
+    isWebhookActive = false;
+    activeTransportMode = 'polling';
     startRuntimeHealthMonitor();
     console.log(`[TelegramBot] ${role.toUpperCase()} bot polling started successfully.`);
     return true;
@@ -3224,10 +3227,23 @@ function scheduleWebhookRecovery(app: Express, delayMs = 30_000): void {
   webhookRecoveryTimer = setTimeout(() => {
     webhookRecoveryTimer = null;
     if (isWebhookActive) return;
+    const wasPolling = isPollingActive;
+    if (wasPolling) {
+      console.log('[TelegramBot] Testing webhook recovery; pausing polling briefly.');
+      stopBotPolling();
+    }
     console.warn('[TelegramBot] Retrying webhook startup after a temporary Telegram API failure.');
-    void startBotWebhook(app).catch(error => {
+    void (async () => {
+      const restored = await startBotWebhook(app);
+      if (!restored && wasPolling && !isPollingActive) {
+        console.warn('[TelegramBot] Webhook recovery failed; restoring long polling.');
+        await startBotPolling();
+      }
+      if (!restored) scheduleWebhookRecovery(app, isPollingActive ? 5 * 60_000 : 30_000);
+    })().catch(error => {
       console.error('[TelegramBot] Background webhook recovery failed:', error instanceof Error ? error.message : String(error));
-      scheduleWebhookRecovery(app);
+      if (wasPolling && !isPollingActive) void startBotPolling();
+      scheduleWebhookRecovery(app, isPollingActive ? 5 * 60_000 : 30_000);
     });
   }, delayMs);
   webhookRecoveryTimer.unref?.();
@@ -3243,6 +3259,7 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
     console.log('[TelegramBot] Webhook already active.');
     return true;
   }
+  if (isPollingActive) stopBotPolling();
 
   webhookApp = app;
   let role = availableRole(getStoredActiveBotRole());
@@ -3356,6 +3373,7 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
     }
     isWebhookActive = true;
     isPollingActive = false;
+    activeTransportMode = 'webhook';
     startRuntimeHealthMonitor();
     console.log(`[TelegramBot] Webhook enabled at ${webhookUrl}`);
     return true;
@@ -3363,8 +3381,38 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
     isWebhookActive = false;
     const info = classifyTelegramError(err);
     console.error('[TelegramBot] Failed to configure webhook:', info.message);
-    if (isRetryableTelegramError(info)) scheduleWebhookRecovery(app);
-    return false;
+
+    // A webhook-specific registration failure can fall back to getUpdates polling.
+    // If the Bot API itself is unavailable, deleteWebhook/launch will fail and the
+    // normal webhook recovery loop will retry without discarding queued updates.
+    try {
+      await bot!.telegram.deleteWebhook({ drop_pending_updates: false });
+      const launchGeneration = ++pollingLaunchGeneration;
+      botInstance = bot!;
+      isPollingActive = true;
+      activeTransportMode = 'polling';
+      bot!.launch({ dropPendingUpdates: false }).catch(async pollingError => {
+        if (launchGeneration !== pollingLaunchGeneration || botInstance !== bot) return;
+        isPollingActive = false;
+        activeTransportMode = 'offline';
+        const message = pollingError instanceof Error ? pollingError.message : String(pollingError);
+        console.error('[TelegramBot] Long-polling fallback failed:', message);
+        scheduleWebhookRecovery(app, 30_000);
+      });
+      startRuntimeHealthMonitor();
+      console.warn('[TelegramBot] Webhook registration failed; long-polling fallback started.');
+      scheduleWebhookRecovery(app, 5 * 60_000);
+      return true;
+    } catch (fallbackError) {
+      isPollingActive = false;
+      activeTransportMode = 'offline';
+      const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      console.error('[TelegramBot] Long-polling fallback could not start:', fallbackMessage);
+      if (isRetryableTelegramError(info) || isRetryableTelegramError(classifyTelegramError(fallbackError))) {
+        scheduleWebhookRecovery(app);
+      }
+      return false;
+    }
   }
 }
 
@@ -3427,7 +3475,16 @@ export async function stopBotRuntime(): Promise<void> {
   stopBotPolling();
   botInstance = null;
   isPollingActive = false;
+  activeTransportMode = 'offline';
   console.log('[TelegramBot] Runtime stopped.');
+}
+
+export function getBotRuntimeStatus(): { active: boolean; mode: 'webhook' | 'polling' | 'offline'; fallback: boolean } {
+  return {
+    active: isPollingActive || isWebhookActive,
+    mode: activeTransportMode,
+    fallback: activeTransportMode === 'polling' && Boolean(config.webhookUrl && config.webhookSecret),
+  };
 }
 
 export function isBotActive(): boolean {
