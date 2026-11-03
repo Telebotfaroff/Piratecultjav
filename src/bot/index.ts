@@ -215,15 +215,28 @@ function setupBots(controllerBot: Telegraf, deliveryBot: Telegraf | null): void 
     if (!isAdmin(ctx.from?.id)) return;
     const token = ctx.message.text.split(' ')[1];
     if (!token) return ctx.reply('Usage: /setdeliverybot <token>');
+    // Validate the candidate before persisting it; never replace a working delivery token with an invalid one.
+    try {
+      const candidate = new Telegraf(token);
+      const candidateInfo = await candidate.telegram.getMe();
+      const controllerInfo = await controllerBot.telegram.getMe();
+      if (candidateInfo.id === controllerInfo.id) {
+        return ctx.reply('❌ The delivery bot must be different from the controller bot.');
+      }
+    } catch (err) {
+      console.warn('[TelegramBot] Rejected invalid delivery bot token:', err instanceof Error ? err.message : String(err));
+      return ctx.reply('❌ Telegram rejected that bot token. The current delivery bot configuration was not changed.');
+    }
+
     await setSetting('delivery_bot_token', token);
-    await ctx.reply('Delivery controllerBot token updated. Restarting bots...');
+    await ctx.reply('✅ Delivery bot token validated and saved. Restarting bots...');
     setTimeout(() => {
-        const mode = getBotRuntimeStatus().mode;
-        if (mode === 'webhook' && webhookApp) {
-             startBotWebhook(webhookApp);
-        } else {
-             startBotPolling();
-        }
+      const mode = getBotRuntimeStatus().mode;
+      if (mode === 'webhook' && webhookApp) {
+        void startBotWebhook(webhookApp);
+      } else {
+        void startBotPolling();
+      }
     }, 1000);
   });
 
@@ -254,7 +267,7 @@ deliveryBot?.command('start', async (ctx) => {
 
     if (payload) {
       const videoId = extractVideoIdFromStartPayload(payload);
-      return deliverVideoToUser(controllerBot, ctx, videoId ?? payload, videoId ? 'deep_link' : 'unknown');
+      return deliverVideoToUser(deliveryBot!, ctx, videoId ?? payload, videoId ? 'deep_link' : 'unknown');
     }
 
     const welcome = [
@@ -3100,32 +3113,32 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
     return false;
   }
 
-  if (isWebhookActive) stopBotPolling(); // using stop to reset
-
-  webhookApp = app;
-
-  const primary = config.botToken || config.backupBotToken;
-  if (!primary) return false;
-
-  controllerBotInstance = new Telegraf(primary);
-
-  const deliveryToken = await getSetting<string>('delivery_bot_token', '');
-  if (deliveryToken) {
-    deliveryBotInstance = new Telegraf(deliveryToken);
-  } else {
-    console.warn("No delivery bot token configured. Public commands will be unavailable.");
+  if (controllerBotInstance || deliveryBotInstance || isPollingActive || isWebhookActive) {
+    stopBotPolling();
   }
 
-  setupBots(controllerBotInstance, deliveryBotInstance);
+  webhookApp = app;
+  const preferredRole = getStoredActiveBotRole();
+  const selectedRole = availableRole(preferredRole);
+  if (!selectedRole) return false;
+  const controllerToken = tokenForRole(selectedRole);
+  if (!controllerToken) return false;
 
   try {
+    controllerBotInstance = new Telegraf(controllerToken);
+    const deliveryToken = await getSetting<string>('delivery_bot_token', '');
+    deliveryBotInstance = deliveryToken ? new Telegraf(deliveryToken) : null;
+    if (!deliveryBotInstance) {
+      console.warn('[TelegramBot] No delivery bot token configured. Public commands will be unavailable.');
+    }
+
+    setupBots(controllerBotInstance, deliveryBotInstance);
     const webhookUrl = `${config.webhookUrl}${config.webhookPath}`;
 
     await controllerBotInstance.telegram.setWebhook(webhookUrl, {
       secret_token: config.webhookSecret,
       drop_pending_updates: false,
     });
-
     if (deliveryBotInstance) {
       await deliveryBotInstance.telegram.setWebhook(webhookUrl, {
         secret_token: config.webhookSecret,
@@ -3139,70 +3152,114 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
       webhookRouteRegistered = true;
     }
 
+    setActiveBotRole(selectedRole);
+    runtimeFailoverAttempted = selectedRole !== preferredRole;
     isWebhookActive = true;
     isPollingActive = false;
     activeTransportMode = 'webhook';
-    console.log(`[TelegramBot] Webhook enabled at ${webhookUrl}`);
+    console.log(`[TelegramBot] Webhook enabled for controller role=${selectedRole} at ${webhookUrl}`);
     return true;
   } catch (err: unknown) {
-    isWebhookActive = false;
-    console.error('[TelegramBot] Failed to configure webhook:', err);
+    console.error('[TelegramBot] Webhook startup failed; cleaning up and trying long polling:', err);
+    stopBotPolling();
     return startBotPolling();
   }
 }
 
 export async function startBotPolling(): Promise<boolean> {
-  if (isPollingActive) stopBotPolling();
-
-  const primary = config.botToken || config.backupBotToken;
-  if (!primary) return false;
-
-  controllerBotInstance = new Telegraf(primary);
+  if (controllerBotInstance || deliveryBotInstance || isPollingActive || isWebhookActive) {
+    stopBotPolling();
+  }
 
   const deliveryToken = await getSetting<string>('delivery_bot_token', '');
-  if (deliveryToken) {
-    deliveryBotInstance = new Telegraf(deliveryToken);
-  } else {
-    console.warn("No delivery bot token configured. Public commands will be unavailable.");
+  const preferredRole = getStoredActiveBotRole();
+  const roles: Array<'primary' | 'backup'> = [
+    preferredRole,
+    preferredRole === 'primary' ? 'backup' : 'primary',
+  ];
+  let lastError: unknown = null;
+
+  for (const role of roles) {
+    const controllerToken = tokenForRole(role);
+    if (!controllerToken) continue;
+
+    try {
+      controllerBotInstance = new Telegraf(controllerToken);
+      deliveryBotInstance = deliveryToken ? new Telegraf(deliveryToken) : null;
+      if (!deliveryBotInstance) {
+        console.warn('[TelegramBot] No delivery bot token configured. Public commands will be unavailable.');
+      }
+
+      setupBots(controllerBotInstance, deliveryBotInstance);
+      await controllerBotInstance.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
+      if (deliveryBotInstance) {
+        await deliveryBotInstance.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
+      }
+
+      await controllerBotInstance.launch({ dropPendingUpdates: false });
+      if (deliveryBotInstance) {
+        await deliveryBotInstance.launch({ dropPendingUpdates: false });
+      }
+
+      setActiveBotRole(role);
+      runtimeFailoverAttempted = role !== preferredRole;
+      isPollingActive = true;
+      isWebhookActive = false;
+      activeTransportMode = 'polling';
+      console.log(`[TelegramBot] Long polling started. Controller role=${role}, fallback=${runtimeFailoverAttempted}.`);
+      return true;
+    } catch (err) {
+      lastError = err;
+      console.error(`[TelegramBot] Startup failed for controller role=${role}; cleaning up before trying another role:`, err);
+      // Always stop partially launched instances, even before the active flag is set.
+      stopBotPolling();
+    }
   }
 
-  setupBots(controllerBotInstance, deliveryBotInstance);
-
-  try {
-    await controllerBotInstance.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
-    if (deliveryBotInstance) {
-      await deliveryBotInstance.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
-    }
-
-    await controllerBotInstance.launch({ dropPendingUpdates: false });
-    if (deliveryBotInstance) {
-      await deliveryBotInstance.launch({ dropPendingUpdates: false });
-    }
-
-    isPollingActive = true;
-    isWebhookActive = false;
-    activeTransportMode = 'polling';
-    return true;
-  } catch (err) {
-    console.error('[TelegramBot] Polling startup failed:', err);
-    stopBotPolling();
-    return false;
-  }
+  if (lastError) console.error('[TelegramBot] All configured controller bot roles failed to start.');
+  return false;
 }
 
 export function isBotRoleConfigured(role: 'primary' | 'backup'): boolean {
-  return Boolean(config.botToken);
+  return Boolean(tokenForRole(role));
 }
 
 export async function switchBotRole(role: 'primary' | 'backup'): Promise<boolean> {
-  return false; // disabled with dual bots
+  if (!isBotRoleConfigured(role)) return false;
+  const previousRole = getStoredActiveBotRole();
+  if (previousRole === role) return true;
+
+  const previousMode = activeTransportMode;
+  const wasActive = isBotActive();
+  setActiveBotRole(role);
+
+  if (!wasActive) {
+    runtimeFailoverAttempted = false;
+    return true;
+  }
+
+  const started = previousMode === 'webhook' && webhookApp
+    ? await startBotWebhook(webhookApp)
+    : await startBotPolling();
+
+  if (started) return getStoredActiveBotRole() === role;
+
+  setActiveBotRole(previousRole);
+  if (previousMode === 'webhook' && webhookApp) {
+    await startBotWebhook(webhookApp);
+  } else {
+    await startBotPolling();
+  }
+  return false;
 }
 
 export function stopBotPolling(): void {
-  if (controllerBotInstance && isPollingActive) {
+  // Telegraf may have launched one instance before another instance failed.
+  // Stop every constructed instance regardless of the aggregate active flag.
+  if (controllerBotInstance) {
     try { controllerBotInstance.stop('Stopping controller bot'); } catch {}
   }
-  if (deliveryBotInstance && isPollingActive) {
+  if (deliveryBotInstance) {
     try { deliveryBotInstance.stop('Stopping delivery bot'); } catch {}
   }
   isPollingActive = false;
@@ -3211,7 +3268,6 @@ export function stopBotPolling(): void {
   controllerBotInstance = null;
   deliveryBotInstance = null;
 }
-
 export async function stopBotRuntime(): Promise<void> {
   if (webhookRecoveryTimer) { clearTimeout(webhookRecoveryTimer); webhookRecoveryTimer = null; }
   if (pendingNotFoundWatcher) { clearInterval(pendingNotFoundWatcher); pendingNotFoundWatcher = null; }
@@ -3221,7 +3277,7 @@ export async function stopBotRuntime(): Promise<void> {
 }
 
 export function getBotRuntimeStatus(): { active: boolean; mode: 'webhook' | 'polling' | 'offline'; fallback: boolean } {
-  return { active: isPollingActive || isWebhookActive, mode: activeTransportMode, fallback: false };
+  return { active: isPollingActive || isWebhookActive, mode: activeTransportMode, fallback: runtimeFailoverAttempted };
 }
 
 export function isBotActive(): boolean { return isPollingActive || isWebhookActive; }
