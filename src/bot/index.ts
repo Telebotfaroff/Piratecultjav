@@ -3208,10 +3208,12 @@ export async function startBotPolling(): Promise<boolean> {
     console.log(`[TelegramBot] ${role.toUpperCase()} bot polling started successfully.`);
     return true;
   } catch (err: unknown) {
-    console.error('[TelegramBot] Failed to launch bot:', err);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[TelegramBot] Failed to launch bot:', message);
     isPollingActive = false;
     activeTransportMode = 'offline';
     botInstance = null;
+    if (role === 'primary') await failoverToBackup(message);
     return false;
   }
 }
