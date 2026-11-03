@@ -10,8 +10,8 @@ export class HistoricalIndexerProcess {
   private restartDelayMs = 5_000;
 
   start(): void {
-    if (process.env.HISTORICAL_INDEXER_ENABLED?.toLowerCase() === 'false') {
-      console.log('[HistoricalIndexer] Disabled by HISTORICAL_INDEXER_ENABLED=false.');
+    if (process.env.HISTORICAL_INDEXER_ENABLED?.toLowerCase() !== 'true') {
+      console.log('[HistoricalIndexer] Disabled. Set HISTORICAL_INDEXER_ENABLED=true after configuring the Pyrogram session.');
       return;
     }
 
