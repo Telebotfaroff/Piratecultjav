@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { config, validateConfig } from './config.ts';
+import { config, validateConfig, isAdminApiKeyValid } from './config.ts';
 import { checkSupabaseConnection } from './database/supabase.ts';
 import { countVideos, searchVideos, getVideoById, toPublicVideo } from './services/videos.ts';
 import { countJobs, createIndexJob, getRecentJobs, retryJob } from './services/indexJobs.ts';
@@ -90,7 +90,7 @@ function adminOnly(req: Request, res: Response, next: express.NextFunction): voi
 
   // Direct API-key access is useful for scripts/automation and never gets sent to the browser.
   const apiKey = req.headers['x-admin-key'];
-  if (typeof apiKey === 'string' && config.adminApiKey && safeEqual(apiKey, config.adminApiKey)) {
+  if (typeof apiKey === 'string' && isAdminApiKeyValid(config.adminApiKey) && safeEqual(apiKey, config.adminApiKey)) {
     return next();
   }
 
@@ -99,6 +99,18 @@ function adminOnly(req: Request, res: Response, next: express.NextFunction): voi
 
 export function createApp(): express.Express {
   const app = express();
+  // Render terminates TLS and forwards requests through one trusted proxy hop.
+  // Never enable unrestricted trust-proxy mode: that would let clients spoof X-Forwarded-For.
+  const configuredProxyHops = process.env.TRUST_PROXY_HOPS;
+  if (configuredProxyHops !== undefined && configuredProxyHops.trim() !== '') {
+    const proxyHops = Number(configuredProxyHops);
+    if (!Number.isInteger(proxyHops) || proxyHops < 0 || proxyHops > 5) {
+      throw new Error('TRUST_PROXY_HOPS must be an integer between 0 and 5.');
+    }
+    app.set('trust proxy', proxyHops);
+  } else if (process.env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1);
+  }
   app.disable('x-powered-by');
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -110,8 +122,8 @@ export function createApp(): express.Express {
   app.use(express.json({ limit: '100kb' }));
 
   app.post('/api/auth/login', publicRateLimit, (req: Request, res: Response) => {
-    if (!config.adminApiKey) {
-      return res.status(503).json({ ok: false, error: 'ADMIN_API_KEY is not configured' });
+    if (!isAdminApiKeyValid(config.adminApiKey)) {
+      return res.status(503).json({ ok: false, error: 'ADMIN_API_KEY must be at least 32 characters and must not use the example placeholder.' });
     }
 
     const supplied = typeof req.body?.key === 'string' ? req.body.key : '';
