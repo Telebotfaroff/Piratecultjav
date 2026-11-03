@@ -3202,6 +3202,7 @@ export async function startBotPolling(): Promise<boolean> {
     bot.launch({ dropPendingUpdates: false }).catch(async err => {
       if (launchGeneration !== pollingLaunchGeneration || botInstance !== bot) return;
       isPollingActive = false;
+      activeTransportMode = 'offline';
       botInstance = null;
       const message = err instanceof Error ? err.message : String(err);
       console.error('[TelegramBot] Polling error:', message);
@@ -3216,6 +3217,7 @@ export async function startBotPolling(): Promise<boolean> {
   } catch (err: unknown) {
     console.error('[TelegramBot] Failed to launch bot:', err);
     isPollingActive = false;
+    activeTransportMode = 'offline';
     botInstance = null;
     return false;
   }
@@ -3447,6 +3449,7 @@ export function stopBotPolling(): void {
       // Ignore
     }
     isPollingActive = false;
+    if (!isWebhookActive) activeTransportMode = 'offline';
     console.log('[TelegramBot] Bot polling stopped.');
   }
 }
