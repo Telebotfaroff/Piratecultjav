@@ -51,6 +51,10 @@ export const config: AppConfig = {
   premium90Stars: parseInt(process.env.PREMIUM_90_STARS || '350', 10),
 };
 
+export function isAdminApiKeyValid(value: string): boolean {
+  return value.length >= 32 && value !== 'change-this-to-a-long-random-secret';
+}
+
 export function isAdmin(telegramUserId: number | undefined): boolean {
   if (!telegramUserId) return false;
   return config.adminIds.includes(telegramUserId);
@@ -85,8 +89,8 @@ export function validateConfig(): ConfigValidationResult {
   if (!config.dumpChatId) {
     warnings.push('DUMP_CHAT_ID (Defaulting to -1004426377644)');
   }
-  if (!config.adminApiKey) {
-    missing.push('ADMIN_API_KEY');
+  if (!isAdminApiKeyValid(config.adminApiKey)) {
+    missing.push('ADMIN_API_KEY (must be at least 32 characters and not the example placeholder)');
   }
 
   return {
