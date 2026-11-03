@@ -279,6 +279,32 @@ class HistoricalIndexer:
             )
             return "indexed" if inserted else "duplicate"
 
+    async def resolve_peer_from_dialogs(self, peer_id: int):
+        assert self.client
+        async for dialog in self.client.get_dialogs():
+            chat = dialog.chat
+            if chat and int(chat.id) == peer_id:
+                return chat
+        return None
+
+    async def resolve_source_chat(self, source_chat_id: str):
+        assert self.client
+        raw_id = str(source_chat_id).strip()
+        if not raw_id.lstrip("-").isdigit():
+            return await self.client.get_chat(raw_id)
+        target_id = int(raw_id)
+        try:
+            return await self.client.get_chat(target_id)
+        except Exception as direct_error:
+            LOG.info("Source peer not cached; searching account dialogs | source=%s", raw_id)
+            chat = await self.resolve_peer_from_dialogs(target_id)
+            if chat:
+                return chat
+            raise ValueError(
+                f"Pyrogram account cannot access channel {raw_id}. "
+                "Join it using the account in PYROGRAM_SESSION_STRING, then open it once."
+            ) from direct_error
+
     async def process_job(self, job: asyncpg.Record) -> None:
         assert self.client and self.pool
         job_id = job["id"]
@@ -290,14 +316,14 @@ class HistoricalIndexer:
         last_message_id = cursor
 
         try:
-            source_chat = await self.client.get_chat(source_chat_id)
+            source_chat = await self.resolve_source_chat(source_chat_id)
             canonical_source_chat_id = str(source_chat.id)
             allowed = set(json_list(job["media_filters"], list(MEDIA_ATTRIBUTES)))
             if job["media_mode"] == "all":
                 allowed = set(MEDIA_ATTRIBUTES)
             LOG.info("Historical job started | job_id=%s | source=%s", job_id, source_chat_id)
             async for message in self.client.get_chat_history(
-                source_chat_id, limit=0, offset_id=cursor
+                source_chat.id, limit=0, offset_id=cursor
             ):
                 if self.stop_event.is_set():
                     # Release immediately; the uncommitted batch will safely replay from its checkpoint.
@@ -386,9 +412,13 @@ class HistoricalIndexer:
             return
         for chat_id in chat_ids:
             try:
-                await self.client.send_message(chat_id, message, disable_web_page_preview=True)
+                target = await self.client.resolve_peer(int(chat_id))
+                await self.client.send_message(target, message, disable_web_page_preview=True)
             except Exception:
-                LOG.exception("Could not send historical indexer notification | chat_id=%s", chat_id)
+                LOG.exception(
+                    "Could not notify admin | chat_id=%s. The Pyrogram account must have an existing private chat with this admin.",
+                    chat_id,
+                )
 
     async def release_job(self, job_id: int) -> None:
         assert self.pool
