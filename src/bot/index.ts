@@ -2479,7 +2479,7 @@ deliveryBot?.command('start', async (ctx) => {
       '⏳ <b>Download All started</b>\n\n🔎 Search: <code>' + escapeHtml(query) + '</code>\nYour matching videos will be sent one by one. Keep this chat open.',
       { parse_mode: 'HTML' },
     );
-    return downloadAllSearchResults(controllerBot, ctx, query);
+    return downloadAllSearchResults(deliveryBot!, ctx, query);
   });
 
   deliveryBot?.action('downloadall:cancel', async (ctx) => {
@@ -2494,7 +2494,7 @@ deliveryBot?.command('start', async (ctx) => {
   deliveryBot?.action(/^download:(.+)$/, async (ctx) => {
     const identifier = ctx.match[1];
     await ctx.answerCbQuery('Fetching video...');
-    return deliverVideoToUser(controllerBot, ctx, identifier);
+    return deliverVideoToUser(deliveryBot!, ctx, identifier);
   });
 
   controllerBot.action('premium:store', async (ctx) => {
@@ -2681,7 +2681,7 @@ deliveryBot?.command('start', async (ctx) => {
     await ctx.answerCbQuery('Checking membership...');
     if (!ctx.from) return;
 
-    const forceSub = await checkUserForceSub(controllerBot, ctx.from.id);
+    const forceSub = await checkUserForceSub(deliveryBot!, ctx.from.id);
     if (forceSub.passed) {
       return ctx.reply('✅ Membership verified. You can now search for videos.');
     }
