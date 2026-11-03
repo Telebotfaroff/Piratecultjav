@@ -1,6 +1,6 @@
 # Historical Indexer Worker
 
-This service scans historical Telegram channel messages using a dedicated Pyrogram user session. It is independent of both Telegraf bots.
+This worker scans historical Telegram channel messages using a dedicated Pyrogram user session. In the Render deployment it runs as an optional, supervised child process inside the same application container as the website and Telegraf bots.
 
 ## Required environment
 
@@ -12,6 +12,10 @@ This service scans historical Telegram channel messages using a dedicated Pyrogr
 - `BATCH_SIZE` (optional, default 50).
 
 The worker never accepts a plaintext session string from command-line arguments and never logs decrypted session material. The controller/admin API must encrypt the session with the same Fernet key before storing it.
+
+## Enable in the single Render service
+
+Set `HISTORICAL_INDEXER_ENABLED=true` only after the required environment variables and encrypted session are configured. The Docker image installs these Python dependencies; the Node.js server supervises the worker and restarts it with backoff. Leave it disabled during initial deployment if no Pyrogram session has been configured yet.
 
 ## Run locally
 
