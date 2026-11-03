@@ -2600,24 +2600,25 @@ bot.command('start', async (ctx) => {
       return;
     }
 
-    const primaryCode = codes[0];
     const messageId = post.message_id;
-    console.log(`[DumpPost] Detected media message #${messageId} in ${chatId} with code ${primaryCode}`);
+    for (const primaryCode of codes) {
+      console.log(`[DumpPost] Detected media message #${messageId} in ${chatId} with code ${primaryCode}`);
 
-    try {
-      const result = await createIndexJob({
-        code: primaryCode,
-        dumpChatId: chatId,
-        videoMessageId: messageId,
-      });
+      try {
+        const result = await createIndexJob({
+          code: primaryCode,
+          dumpChatId: chatId,
+          videoMessageId: messageId,
+        });
 
-      if (result.created) {
-        console.log(`[DumpPost] Successfully queued index job #${result.job.id} for ${primaryCode}`);
-      } else {
-        console.log(`[DumpPost] Skipped duplicate media: ${result.reason}`);
+        if (result.created) {
+          console.log(`[DumpPost] Successfully queued index job #${result.job.id} for ${primaryCode}`);
+        } else {
+          console.log(`[DumpPost] Skipped duplicate media: ${result.reason}`);
+        }
+      } catch (err) {
+        console.error(`[DumpPost] Failed to queue message #${messageId} (${primaryCode}):`, err instanceof Error ? err.message : String(err));
       }
-    } catch (err) {
-      console.error(`[DumpPost] Failed to queue message #${messageId} (${primaryCode}):`, err instanceof Error ? err.message : String(err));
     }
   });
 
