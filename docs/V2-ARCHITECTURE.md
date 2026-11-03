@@ -8,17 +8,20 @@ V2 separates three runtime responsibilities while preserving the existing Supaba
 2. **User bot** — replaceable public interface for search, user commands, and Telegram delivery. It must not be required for the website or indexing worker to remain available.
 3. **Pyrogram historical indexer** — a separate MTProto worker using an administrator-provided user session string to scan historical channel messages and enqueue normalized records.
 
-The existing web/API service remains independently deployable.
+All components ship together as one Render Web Service and one Docker container. Runtime responsibilities remain logically isolated inside that single application.
 
 ## Runtime boundaries
 
-- web: Express API and React application. No Telegram polling loop.
+These are logical components, not separate Render services:
+
+- web/API: Express API and React application, hosted by the same Node.js server.
 - controller: Telegraf polling for admins only.
 - user-bot: Telegraf polling for public users. Exactly one active token at a time.
-- historical-indexer: Python/Pyrogram worker. It does not own public bot commands.
+- Node.js indexer: existing background queue worker in the Node.js process.
+- historical-indexer: optional Python/Pyrogram child process supervised by the Node.js server.
 - database: shared Supabase PostgreSQL schema and repositories.
 
-The first migration step may keep code in the existing repository and deploy processes with separate start commands. Physical package extraction happens only after runtime boundaries are tested.
+Render runs one Web Service, one Docker container, and one deployment. Controller and User Bot startup failures are isolated from one another; a Pyrogram child-process failure is restarted independently and must not terminate the HTTP server or Telegram bots.
 
 ## Bot lifecycle
 
@@ -62,9 +65,9 @@ The session string is a secret. It must be encrypted at rest using a separately 
 
 ## Deployment model
 
-Deploy independent Render services/processes: web/API, controller bot worker, user bot worker, and Pyrogram historical indexer.
+Deploy exactly one Render Web Service from the repository's `render.yaml` using the included Dockerfile. The container runs the Express/React application, both Telegraf bots using long polling, and the existing Node.js indexer. When explicitly enabled and fully configured, the Python/Pyrogram historical indexer runs as a supervised child process in the same container.
 
-All workers use the same Supabase database but have separate process health and restart policies. The web service must not be taken down by Telegram polling or historical indexing failures.
+The HTTP server remains the primary process and owns graceful shutdown. Bot startup failures are isolated; the Pyrogram worker has its own restart backoff. Render health checks use `/health`. Do not create separate Render services for individual components.
 
 ## Migration principles
 
