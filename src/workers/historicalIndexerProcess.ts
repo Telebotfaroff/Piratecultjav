@@ -16,7 +16,7 @@ export class HistoricalIndexerProcess {
     }
 
     const hasEnvironmentSession = Boolean(process.env.PYROGRAM_SESSION_STRING?.trim());
-    const missing = REQUIRED_ENV.filter((key) => !process.env[key]?.trim());
+    const missing: string[] = REQUIRED_ENV.filter((key) => !process.env[key]?.trim());
     if (!hasEnvironmentSession && !process.env.SESSION_ENCRYPTION_KEY?.trim()) {
       missing.push('PYROGRAM_SESSION_STRING (or SESSION_ENCRYPTION_KEY with an encrypted Supabase session)');
     }
