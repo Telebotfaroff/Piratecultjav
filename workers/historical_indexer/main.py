@@ -208,7 +208,9 @@ class HistoricalIndexer:
                     return "cancel"
                 return str(state["status"])
 
-    async def store_message(self, job: asyncpg.Record, message: Message, allowed: set[str]) -> str:
+    async def store_message(
+        self, source_chat_id: str, message: Message, allowed: set[str]
+    ) -> str:
         assert self.pool
         details = media_details(message, allowed)
         if details is None:
@@ -225,7 +227,7 @@ class HistoricalIndexer:
                 ON CONFLICT (source_chat_id, source_message_id) DO NOTHING
                 RETURNING id
                 """,
-                str(job["source_chat_id"]), message.id, details["media_type"],
+                source_chat_id, message.id, details["media_type"],
                 details["code"], details["caption"], details["media_group_id"],
                 details["file_unique_id"], details["mime_type"], details["file_size"],
                 details["message_date"], json.dumps(details["metadata"]),
@@ -235,6 +237,8 @@ class HistoricalIndexer:
     async def process_job(self, job: asyncpg.Record) -> None:
         assert self.client and self.pool
         job_id = job["id"]
+        source_chat = await self.client.get_chat(job["source_chat_id"])
+        canonical_source_chat_id = str(source_chat.id)
         source_chat_id = job["source_chat_id"]
         allowed = set(json_list(job["media_filters"], list(MEDIA_ATTRIBUTES)))
         if job["media_mode"] == "all":
@@ -270,7 +274,7 @@ class HistoricalIndexer:
                 scanned += 1
                 last_message_id = message.id
                 try:
-                    outcome = await self.store_message(job, message, allowed)
+                    outcome = await self.store_message(canonical_source_chat_id, message, allowed)
                     if outcome == "indexed":
                         indexed += 1
                     elif outcome == "duplicate":
