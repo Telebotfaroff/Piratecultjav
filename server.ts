@@ -75,8 +75,21 @@ async function startServer() {
   } else {
     // Serve static frontend files in production
     const distPath = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, {
+      // Vite's fingerprinted assets can be cached for a year. Keep HTML revalidated
+      // so a deployment immediately picks up the newest asset manifest.
+      maxAge: '1y',
+      immutable: true,
+      setHeaders(res, filePath) {
+        if (/[.-][a-f0-9]{8,}[.-]/i.test(path.basename(filePath))) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+      },
+    }));
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.resolve(distPath, 'index.html'));
     });
   }
