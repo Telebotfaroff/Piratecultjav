@@ -215,17 +215,22 @@ function setupBots(controllerBot: Telegraf, deliveryBot: Telegraf | null): void 
     if (!isAdmin(ctx.from?.id)) return;
     const token = ctx.message.text.split(' ')[1];
     if (!token) return ctx.reply('Usage: /setdeliverybot <token>');
+    // Remove the command message so the token is not left visible in the admin chat.
+    await ctx.deleteMessage().catch(() => undefined);
+
     // Validate the candidate before persisting it; never replace a working delivery token with an invalid one.
     try {
       const candidate = new Telegraf(token);
       const candidateInfo = await candidate.telegram.getMe();
-      const controllerInfo = await controllerBot.telegram.getMe();
-      if (candidateInfo.id === controllerInfo.id) {
-        return ctx.reply('❌ The delivery bot must be different from the controller bot.');
+      const controllerIds = new Set<number>();
+      if (config.botToken) controllerIds.add((await new Telegraf(config.botToken).telegram.getMe()).id);
+      if (config.backupBotToken) controllerIds.add((await new Telegraf(config.backupBotToken).telegram.getMe()).id);
+      if (controllerIds.has(candidateInfo.id)) {
+        return ctx.reply('❌ The delivery bot must be different from both controller bot roles.');
       }
     } catch (err) {
       console.warn('[TelegramBot] Rejected invalid delivery bot token:', err instanceof Error ? err.message : String(err));
-      return ctx.reply('❌ Telegram rejected that bot token. The current delivery bot configuration was not changed.');
+      return ctx.reply('❌ Telegram rejected that bot token or controller credentials could not be verified. The current delivery bot configuration was not changed.');
     }
 
     await setSetting('delivery_bot_token', token);
