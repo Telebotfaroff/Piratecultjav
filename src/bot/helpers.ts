@@ -682,36 +682,25 @@ async function showAdminSettings(ctx: any) {
   ]);
 
   const text = [
-    '🛡️ <b>PIRATECULTJAV CONTROL PANEL</b>',
-    '━━━━━━━━━━━━━━━━━━━━',
+    '🛡️ <b>PIRATECULTJAV · ADMIN</b>',
+    '👥 <b>' + users + '</b> users  ·  🎬 <b>' + videos + '</b> videos',
+    '⚙️ <b>' + jobs.queued + '</b> queued  ·  <b>' + jobs.processing + '</b> running',
+    '🤖 ' + getActiveBotRole().toUpperCase() + '  ·  🔒 Force-sub ' + (forceSub ? 'ON' : 'OFF') +
+      '  ·  🛠️ Maintenance ' + (maintenance ? 'ON' : 'OFF'),
+    '🗑️ Auto-delete: <b>' + formatTimer(deleteTimer) + '</b>',
     '',
-    '📊 <b>LIVE DASHBOARD</b>',
-    `👥 Users: <b>${users}</b>  ·  🎬 Videos: <b>${videos}</b>`,
-    `⚙️ Jobs: <b>${jobs.queued}</b> queued · <b>${jobs.processing}</b> processing`,
-    `🤖 Bot: <b>ONLINE</b> · ${getActiveBotRole().toUpperCase()}`,
-    '',
-    '━━━━━━━━━━━━━━━━━━━━',
-    '🔐 <b>ACCESS & SAFETY</b>',
-    `🔒 Force Sub: <b>${forceSub ? 'ON' : 'OFF'}</b>`,
-    `🛠️ Maintenance: <b>${maintenance ? 'ON' : 'OFF'}</b>`,
-    `🗑️ Auto Delete: <b>${formatTimer(deleteTimer)}</b>`,
-    '',
-    '━━━━━━━━━━━━━━━━━━━━',
-    '🧭 <b>MANAGEMENT SECTIONS</b>',
-    '<i>Select a module below to manage your bot.</i>',
-  ].join('\n');
+    '<i>Choose a section</i>',
+  ].join('\\n');
 
   const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('📊 Overview', 'admin:overview'), Markup.button.callback('👥 Users', 'admin:users')],
-    [Markup.button.callback('💰 Monetization', 'admin:monetization'), Markup.button.callback('📥 Quotas', 'admin:quota')],
+    [Markup.button.callback('📊 Stats', 'admin:overview'), Markup.button.callback('👥 Users', 'admin:users')],
     [Markup.button.callback('🎬 Content', 'admin:content'), Markup.button.callback('⚙️ Jobs', 'admin:jobs')],
-    [Markup.button.callback('🕘 Historical Indexer', 'admin:history')],
-    [Markup.button.callback('📣 Broadcast', 'settings:broadcast'), Markup.button.callback('🔒 Force Sub', 'settings:forcesub')],
-    [Markup.button.callback('🧾 Missing Metadata', 'admin:missedcodes')],
-    [Markup.button.callback('🔔 Notification Channels', 'settings:notifications')],
-    [Markup.button.callback('🚚 Delivery Bot', 'settings:deliverybot')],
+    [Markup.button.callback('🕘 History', 'admin:history'), Markup.button.callback('💰 Monetization', 'admin:monetization')],
+    [Markup.button.callback('📥 Quotas', 'admin:quota'), Markup.button.callback('📣 Broadcast', 'settings:broadcast')],
+    [Markup.button.callback('🔒 Force-sub', 'settings:forcesub'), Markup.button.callback('🧾 Missing', 'admin:missedcodes')],
+    [Markup.button.callback('🔔 Alerts', 'settings:notifications'), Markup.button.callback('🚚 Delivery', 'settings:deliverybot')],
     [Markup.button.callback('🛠️ System', 'admin:system'), Markup.button.callback('🔄 Recovery', 'settings:recovery')],
-    [Markup.button.callback('❌ Close', 'settings:close')],
+    [Markup.button.callback('✖ Close', 'settings:close')],
   ]);
 
   if (ctx.callbackQuery) return ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
