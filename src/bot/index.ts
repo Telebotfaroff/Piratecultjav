@@ -19,7 +19,7 @@ import { deliverVideoToUser, downloadAllSearchResults, showAdminVideoEditMenu, s
 import { registerPaymentEvents } from './events/payments.ts';
 import { getActiveBotRole as getStoredActiveBotRole, setActiveBotRole } from './state.ts';
 import { getPremiumPackages, savePremiumPackage, removePremiumPackage, togglePremiumPackage, sendPremiumStore, sendPremiumInvoice } from './premium.ts';
-import { getHistoricalIndexerStatus, startHistoricalIndexer, pauseHistoricalIndexer, resumeHistoricalIndexer, enqueueHistoricalSource, enqueueExistingHistoricalSource, listHistoricalSources } from '../services/historicalIndexing.ts';
+import { getHistoricalIndexerStatus, startHistoricalIndexer, pauseHistoricalIndexer, resumeHistoricalIndexer, enqueueHistoricalSource, enqueueExistingHistoricalSource, listHistoricalSources, listRecentHistoricalJobs } from '../services/historicalIndexing.ts';
 import { registerTelegramErrorHandler } from './middleware/errorHandler.ts';
 import { registerUserTrackingMiddleware } from './middleware/userTracking.ts';
 
@@ -1266,7 +1266,7 @@ deliveryBot?.command('start', async (ctx) => {
   });
 
   async function showHistoricalIndexer(ctx: any, edit = true) {
-    const [status, sources] = await Promise.all([getHistoricalIndexerStatus(), listHistoricalSources(8)]);
+    const [status, sources, recentJobs] = await Promise.all([getHistoricalIndexerStatus(), listHistoricalSources(8), listRecentHistoricalJobs(5)]);
     const sourceLines = sources.length
       ? sources.map((source, index) => `${index + 1}. ${escapeHtml(source.title || source.source_username || source.source_chat_id)} · ${source.is_active ? 'Active' : 'Off'}`)
       : ['No source channels added yet.'];
@@ -1277,6 +1277,13 @@ deliveryBot?.command('start', async (ctx) => {
       '⏸ Paused: <b>' + status.paused + '</b> · ❌ Failed: <b>' + status.failed + '</b>\n' +
       '✅ Completed: <b>' + status.completed + '</b> · 📦 Total: <b>' + status.total + '</b>\n\n' +
       '<b>Source channels</b>\n' + sourceLines.join('\n') + '\n\n' +
+      '<b>Recent historical jobs</b>\n' +
+      (recentJobs.length ? recentJobs.map(job =>
+        (job.status === 'completed' ? '✅' : job.status === 'failed' ? '❌' : job.status === 'running' ? '🔄' : job.status === 'paused' ? '⏸' : '⏳') +
+        ' #' + job.id + ' · ' + escapeHtml(job.source_chat_id) + ' · ' + escapeHtml(job.status) +
+        '\n   Scanned ' + job.scanned_count + ' · Indexed ' + job.indexed_count + ' · Errors ' + job.failed_count +
+        (job.error ? '\n   ❌ ' + escapeHtml(job.error.slice(0, 180)) : '')
+      ).join('\n') : 'No historical jobs yet.') + '\n\n' +
       '<i>New sources are scanned from the latest message through all available history.</i>';
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('➕ Add Channel', 'admin:history:add'), Markup.button.callback('📋 Sources', 'admin:history:sources')],
