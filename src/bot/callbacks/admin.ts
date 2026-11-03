@@ -1,6 +1,7 @@
 import { Telegraf } from 'telegraf';
 import { getActiveBotRole } from '../index.ts';
 import { botDeps } from '../deps.ts';
+import { getHistoricalIndexerStatus, startHistoricalIndexer, pauseHistoricalIndexer, resumeHistoricalIndexer } from '../../services/historicalIndexing.ts';
 const {
   Markup, config, isAdmin, normalizeCode, extractCodes, cleanActressList, cleanTitle,
   searchVideos, getVideoById, getVideoByCode, upsertVideoFromProvider, countVideos, updateVideoMetadata, deleteVideo, updateVideoStatus,
@@ -111,6 +112,72 @@ export function registerAdminCallbacks(bot: Telegraf) {
       );
     });
 
+  const showHistoricalIndexer = async (ctx: Parameters<Parameters<Telegraf['action']>[1]>[0]) => {
+    const status = await getHistoricalIndexerStatus();
+    const enabled = status.enabled;
+    const body =
+      '🕘 <b>Historical Indexer</b>\\n\\n' +
+      'Control: <b>' + (enabled ? '🟢 RUNNING / ENABLED' : '⏸ PAUSED') + '</b>\\n\\n' +
+      '⏳ Queued: <b>' + status.queued + '</b>\\n' +
+      '🔄 Running: <b>' + status.running + '</b>\\n' +
+      '⏸ Paused: <b>' + status.paused + '</b>\\n' +
+      '✅ Completed: <b>' + status.completed + '</b>\\n' +
+      '❌ Failed: <b>' + status.failed + '</b>\\n' +
+      '📦 Total: <b>' + status.total + '</b>\\n\\n' +
+      'The worker checks this control every few seconds. Pause takes effect at the next batch checkpoint.';
+    return ctx.editMessageText(body, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('▶️ Start', 'admin:history:start'), Markup.button.callback('⏸ Pause', 'admin:history:pause')],
+        [Markup.button.callback('⏯ Resume paused jobs', 'admin:history:resume')],
+        [Markup.button.callback('🔄 Refresh', 'admin:history'), Markup.button.callback('⬅️ Back', 'admin:content')],
+      ]),
+    });
+  };
+
+  bot.action('admin:history', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
+    await ctx.answerCbQuery();
+    try { return await showHistoricalIndexer(ctx); }
+    catch (error) { return ctx.reply('❌ Could not load historical indexer status: ' + (error instanceof Error ? error.message : String(error))); }
+  });
+
+  bot.action('admin:history:start', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
+    try {
+      await startHistoricalIndexer();
+      await ctx.answerCbQuery('Historical indexing started.');
+      return showHistoricalIndexer(ctx);
+    } catch (error) {
+      await ctx.answerCbQuery('Could not start indexer.', { show_alert: true });
+      return ctx.reply('❌ ' + (error instanceof Error ? error.message : String(error)));
+    }
+  });
+
+  bot.action('admin:history:pause', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
+    try {
+      await pauseHistoricalIndexer();
+      await ctx.answerCbQuery('Pause requested; current batch will finish.');
+      return showHistoricalIndexer(ctx);
+    } catch (error) {
+      await ctx.answerCbQuery('Could not pause indexer.', { show_alert: true });
+      return ctx.reply('❌ ' + (error instanceof Error ? error.message : String(error)));
+    }
+  });
+
+  bot.action('admin:history:resume', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
+    try {
+      await resumeHistoricalIndexer();
+      await ctx.answerCbQuery('Paused jobs queued for resume.');
+      return showHistoricalIndexer(ctx);
+    } catch (error) {
+      await ctx.answerCbQuery('Could not resume indexer.', { show_alert: true });
+      return ctx.reply('❌ ' + (error instanceof Error ? error.message : String(error)));
+    }
+  });
+
   bot.action('admin:content', async (ctx) => {
       if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
       await ctx.answerCbQuery();
@@ -123,6 +190,7 @@ export function registerAdminCallbacks(bot: Telegraf) {
           ...Markup.inlineKeyboard([
             [Markup.button.callback('📝 Post Video', 'admin:post_help'), Markup.button.callback('🧪 Provider Test', 'admin:test_help')],
             [Markup.button.callback('⚙️ Jobs', 'admin:jobs')],
+            [Markup.button.callback('🕘 Historical Indexer', 'admin:history')],
             [Markup.button.callback('⬅️ Back', 'settings:main')],
           ]),
         },
