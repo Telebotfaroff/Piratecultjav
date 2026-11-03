@@ -7,6 +7,38 @@ import { startBotPolling, stopBotRuntime } from './src/bot/index.ts';
 import { runDatabaseMigrations } from './src/database/migrate.ts';
 
 async function startServer() {
+  let pollingRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  let pollingRecoveryDelayMs = 30_000;
+  let pollingStartInProgress = false;
+
+  const startPollingWithRecovery = async (): Promise<void> => {
+    if (pollingStartInProgress) return;
+    pollingStartInProgress = true;
+    try {
+      const active = await startBotPolling();
+      if (active) {
+        pollingRecoveryDelayMs = 30_000;
+        if (pollingRecoveryTimer) clearTimeout(pollingRecoveryTimer);
+        pollingRecoveryTimer = null;
+        return;
+      }
+      console.warn(`[Server] Telegram polling is not active; retrying startup in ${Math.round(pollingRecoveryDelayMs / 1000)} seconds.`);
+    } catch (err) {
+      console.warn('[Server] Telegram polling startup failed:', err instanceof Error ? err.message : String(err));
+    } finally {
+      pollingStartInProgress = false;
+    }
+
+    if (!pollingRecoveryTimer) {
+      const delay = pollingRecoveryDelayMs;
+      pollingRecoveryDelayMs = Math.min(pollingRecoveryDelayMs * 2, 5 * 60_000);
+      pollingRecoveryTimer = setTimeout(() => {
+        pollingRecoveryTimer = null;
+        void startPollingWithRecovery();
+      }, delay);
+      pollingRecoveryTimer.unref?.();
+    }
+  };
   // Prepare a fresh Supabase PostgreSQL database before any bot or API code runs.
   await runDatabaseMigrations();
   const app = createApp();
@@ -60,9 +92,7 @@ async function startServer() {
       // variables are intentionally ignored so Render cannot accidentally switch
       // this deployment back to webhook mode.
       console.log('[Server] Starting Telegram bot with long polling.');
-      startBotPolling().catch(err => {
-        console.warn('[Server] Could not initialize Telegram bot polling:', err instanceof Error ? err.message : String(err));
-      });
+      void startPollingWithRecovery();
     } else {
       console.log('[Server] BOT_TOKEN / BACKUP_BOT_TOKEN not provided; Telegram bot inactive.');
     }
@@ -73,6 +103,11 @@ async function startServer() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[Server] ${signal} received; beginning graceful shutdown.`);
+
+    if (pollingRecoveryTimer) {
+      clearTimeout(pollingRecoveryTimer);
+      pollingRecoveryTimer = null;
+    }
 
     const forceExitTimer = setTimeout(() => {
       console.error('[Server] Graceful shutdown timed out; forcing exit.');
