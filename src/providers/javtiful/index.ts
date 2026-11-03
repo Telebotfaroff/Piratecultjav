@@ -28,6 +28,21 @@ export class JavtifulProvider {
   private cache = new Map<string, CacheEntry>();
   private readonly SUCCESS_TTL_MS = 10 * 60 * 1000; // 10 minutes
   private readonly NEGATIVE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+  private readonly MAX_CACHE_ENTRIES = 5000;
+
+  /** Keep the per-process cache bounded and discard expired entries on writes. */
+  private setCacheEntry(code: string, entry: CacheEntry): void {
+    const now = Date.now();
+    for (const [key, cached] of this.cache) {
+      if (cached.expiresAt <= now) this.cache.delete(key);
+    }
+
+    if (!this.cache.has(code) && this.cache.size >= this.MAX_CACHE_ENTRIES) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) this.cache.delete(oldestKey);
+    }
+    this.cache.set(code, entry);
+  }
 
   /**
    * Fetches metadata for a given JAV code from Javtiful.
@@ -83,7 +98,7 @@ export class JavtifulProvider {
       // completely different video under the requested code.
       if (!targetPageUrl) {
         // Cache negative result for 2 minutes
-        this.cache.set(code, { data: null, expiresAt: now + this.NEGATIVE_TTL_MS });
+        this.setCacheEntry(code, { data: null, expiresAt: now + this.NEGATIVE_TTL_MS });
         throw new ProviderNotFoundError(code);
       }
 
@@ -107,14 +122,14 @@ export class JavtifulProvider {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes('does not match requested code')) {
-          this.cache.set(code, { data: null, expiresAt: now + this.NEGATIVE_TTL_MS });
+          this.setCacheEntry(code, { data: null, expiresAt: now + this.NEGATIVE_TTL_MS });
           throw new ProviderNotFoundError(code);
         }
         throw err;
       }
 
       // Cache successful result for 10 minutes
-      this.cache.set(code, { data: metadata, expiresAt: now + this.SUCCESS_TTL_MS });
+      this.setCacheEntry(code, { data: metadata, expiresAt: now + this.SUCCESS_TTL_MS });
 
       return metadata;
     } catch (err: unknown) {
