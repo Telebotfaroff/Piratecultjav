@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 
 const REQUIRED_ENV = ['DATABASE_URL', 'API_ID', 'API_HASH'] as const;
 
@@ -34,7 +35,12 @@ export class HistoricalIndexerProcess {
   private launch(): void {
     if (this.stopped || this.child) return;
 
-    const python = process.env.PYTHON_BIN || 'python3';
+    // Prefer the Docker image's dedicated venv so system Python cannot be selected accidentally.
+    const bundledVenvPython = '/opt/venv/bin/python';
+    const python = existsSync(bundledVenvPython)
+      ? bundledVenvPython
+      : process.env.PYTHON_BIN || 'python3';
+    console.log(`[HistoricalIndexer] Using Python: ${python}`);
     const script = path.resolve(process.cwd(), 'workers/historical_indexer/main.py');
     console.log('[HistoricalIndexer] Starting Pyrogram historical indexing worker.');
 
