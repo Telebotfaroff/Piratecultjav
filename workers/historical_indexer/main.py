@@ -412,7 +412,16 @@ class HistoricalIndexer:
             return
         for chat_id in chat_ids:
             try:
-                target = await self.client.resolve_peer(int(chat_id))
+                target_id = int(chat_id)
+                try:
+                    target = await self.client.resolve_peer(target_id)
+                except Exception:
+                    target = await self.resolve_peer_from_dialogs(target_id)
+                    if target is None:
+                        raise ValueError(
+                            "Admin is not present in the Pyrogram account's dialogs. "
+                            "Open a private chat with the Pyrogram account first."
+                        )
                 await self.client.send_message(target, message, disable_web_page_preview=True)
             except Exception:
                 LOG.exception(
