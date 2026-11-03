@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS public.index_sources (
   title TEXT,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   media_mode TEXT NOT NULL DEFAULT 'all' CHECK (media_mode IN ('all', 'selective')),
-  media_filters JSONB NOT NULL DEFAULT '["photo","video","document","animation","audio","voice","video_note"]'::jsonb,
+  media_filters JSONB NOT NULL DEFAULT '["photo","video","document","animation","audio","voice","video_note","sticker"]'::jsonb,
   last_scanned_message_id BIGINT NOT NULL DEFAULT 0,
   created_by BIGINT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS public.historical_index_jobs (
     CHECK (status IN ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')),
   media_mode TEXT NOT NULL DEFAULT 'all'
     CHECK (media_mode IN ('all', 'selective')),
-  media_filters JSONB NOT NULL DEFAULT '["photo","video","document","animation","audio","voice","video_note"]'::jsonb,
+  media_filters JSONB NOT NULL DEFAULT '["photo","video","document","animation","audio","voice","video_note","sticker"]'::jsonb,
   start_message_id BIGINT,
   end_message_id BIGINT,
   start_date TIMESTAMPTZ,
