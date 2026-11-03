@@ -11,6 +11,7 @@ This worker scans historical Telegram channel messages using a dedicated Pyrogra
 - `INDEXER_WORKER_ID` (optional): stable worker label for lease ownership.
 - `POLL_INTERVAL_SECONDS` (optional, default 5).
 - `BATCH_SIZE` (optional, default 50).
+- `HISTORICAL_INDEXER_NOTIFY_CHAT_IDS` (optional): comma-separated Telegram admin chat/user IDs. The Pyrogram account sends a failure notification to each ID when a source lookup or indexing job fails. Each recipient must have started a private chat with that account, or the account must be able to message the destination.
 
 The worker never accepts a plaintext session string from command-line arguments and never logs decrypted session material. The controller/admin API must encrypt the session with the same Fernet key before storing it.
 
@@ -34,5 +35,6 @@ python -m workers.historical_indexer.main
 - Message identity is `(source_chat_id, source_message_id)`, so retries do not create duplicate source records.
 - Progress and checkpoints are committed in batches. A worker crash can repeat at most the uncommitted batch, which is safe due to the unique key.
 - Pause/cancel requests are checked between batches.
+- Fatal job errors are saved in `historical_index_jobs.error`, mark the job as `failed`, and trigger a best-effort Telegram notification when `HISTORICAL_INDEXER_NOTIFY_CHAT_IDS` is configured.
 
 The account must already be able to access each configured source channel. This worker only indexes message metadata and Telegram source references; it does not download media files.
