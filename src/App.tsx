@@ -51,12 +51,16 @@ function VideoThumbnail({
   alt,
   className,
   fallbackSize = 10,
+  loading = 'lazy',
+  fetchPriority = 'auto',
 }: {
   src?: string | null;
   highResSrc?: string | null;
   alt: string;
   className?: string;
   fallbackSize?: number;
+  loading?: 'eager' | 'lazy';
+  fetchPriority?: 'high' | 'low' | 'auto';
 }) {
   const [useFallback, setUseFallback] = useState(false);
   const [error, setError] = useState(false);
@@ -77,7 +81,11 @@ function VideoThumbnail({
     <img
       src={resolvedUrl}
       alt={alt}
-      loading="lazy"
+      loading={loading}
+      fetchPriority={fetchPriority}
+      decoding="async"
+      width={640}
+      height={360}
       referrerPolicy="no-referrer"
       onError={() => {
         if (!useFallback && highResSrc && src && highResSrc !== src) {
@@ -274,6 +282,8 @@ function VideoDetails({
                   src={thumbnail}
                   highResSrc={viewMode === 'cover' ? hdCover : undefined}
                   alt={video.title || video.code}
+                  loading="eager"
+                  fetchPriority="high"
                   fallbackSize={14}
                 />
                 <div className="absolute right-2.5 top-2.5 rounded-md bg-slate-950/85 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wider text-emerald-400">
@@ -367,7 +377,10 @@ function VideoDetails({
                   <img
                     src={screenshot.url}
                     alt={`${video.code} screenshot ${index + 1}`}
-                    loading={index < 4 ? 'eager' : 'lazy'}
+                    loading={index < 2 ? 'eager' : 'lazy'}
+                    decoding="async"
+                    width={screenshot.width || 640}
+                    height={screenshot.height || 360}
                     className="aspect-video w-full object-cover transition duration-200 group-hover:scale-[1.02]"
                     onError={(event) => {
                       event.currentTarget.alt = 'Screenshot could not be loaded';
@@ -401,6 +414,7 @@ function VideoDetails({
             <img
               src={selectedScreenshot.url}
               alt={`${video.code} screenshot`}
+              decoding="async"
               className="max-h-[90vh] max-w-full rounded-lg object-contain"
               onClick={event => event.stopPropagation()}
             />
@@ -559,7 +573,7 @@ function CatalogPage({
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-            {videos.map((video) => {
+            {videos.map((video, index) => {
               const thumbnail = video.metadata?.thumbnailUrl || '';
               const hdCover = getHighResCoverUrl(video.code);
               const actresses = video.metadata?.actresses || [];
@@ -579,6 +593,8 @@ function CatalogPage({
                       highResSrc={hdCover}
                       alt={video.title || video.code}
                       className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+                      loading={index < 4 ? 'eager' : 'lazy'}
+                      fetchPriority={index < 2 ? 'high' : 'auto'}
                       fallbackSize={10}
                     />
                     <div className="absolute left-2 top-2 rounded-md bg-slate-950/85 px-2 py-1 font-mono text-[11px] font-semibold text-indigo-300">{video.code}</div>
