@@ -72,8 +72,10 @@ export async function checkUserForceSub(
           (member.status === 'restricted' && 'is_member' in member && Boolean(member.is_member));
         return isMember ? null : ch;
       } catch (err) {
-        console.warn(`Could not verify membership for user ${userId} in channel ${ch.channel_id}:`, err);
-        return ch;
+        // An API/network failure is not proof that the user is unsubscribed.
+        // Propagate it so the bot can report a temporary verification failure.
+        console.warn(`Membership verification failed for user ${userId} in channel ${ch.channel_id}:`, err instanceof Error ? err.message : String(err));
+        throw err;
       }
     }));
     for (const result of results) {
