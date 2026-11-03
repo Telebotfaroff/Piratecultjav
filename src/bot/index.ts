@@ -19,6 +19,7 @@ import { deliverVideoToUser, downloadAllSearchResults, showAdminVideoEditMenu, s
 import { registerPaymentEvents } from './events/payments.ts';
 import { getActiveBotRole as getStoredActiveBotRole, setActiveBotRole } from './state.ts';
 import { getPremiumPackages, savePremiumPackage, removePremiumPackage, togglePremiumPackage, sendPremiumStore, sendPremiumInvoice } from './premium.ts';
+import { getHistoricalIndexerStatus, startHistoricalIndexer, pauseHistoricalIndexer, resumeHistoricalIndexer } from '../services/historicalIndexing.ts';
 import { registerTelegramErrorHandler } from './middleware/errorHandler.ts';
 import { registerUserTrackingMiddleware } from './middleware/userTracking.ts';
 
@@ -1264,6 +1265,87 @@ deliveryBot?.command('start', async (ctx) => {
     return renderNotificationSettings(ctx, false);
   });
 
+  async function showHistoricalIndexer(ctx: any, edit = true) {
+    const status = await getHistoricalIndexerStatus();
+    const text =
+      '🕘 <b>HISTORICAL INDEXER</b>\\n━━━━━━━━━━━━━━━━━━━━\\n\\n' +
+      '⚙️ Control: <b>' + (status.enabled ? '🟢 ENABLED' : '⏸ PAUSED') + '</b>\\n\\n' +
+      '⏳ Queued: <b>' + status.queued + '</b>\\n' +
+      '🔄 Running: <b>' + status.running + '</b>\\n' +
+      '⏸ Paused: <b>' + status.paused + '</b>\\n' +
+      '✅ Completed: <b>' + status.completed + '</b>\\n' +
+      '❌ Failed: <b>' + status.failed + '</b>\\n' +
+      '📦 Total: <b>' + status.total + '</b>\\n\\n' +
+      '<i>Use the controls below to manage historical indexing.</i>';
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('▶️ Start', 'admin:history:start'), Markup.button.callback('⏸ Pause', 'admin:history:pause')],
+      [Markup.button.callback('⏯ Resume paused', 'admin:history:resume')],
+      [Markup.button.callback('🔄 Refresh', 'admin:history'), Markup.button.callback('⬅️ Admin Center', 'settings:main')],
+    ]);
+    if (edit && ctx.callbackQuery) return ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
+    return ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
+  }
+
+  controllerBot.command('history', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
+    try { return await showHistoricalIndexer(ctx, false); }
+    catch (error) { return ctx.reply('❌ Could not load historical indexer: ' + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: 'HTML' }); }
+  });
+
+  controllerBot.command('historystart', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
+    try {
+      await startHistoricalIndexer();
+      return showHistoricalIndexer(ctx, false);
+    } catch (error) {
+      return ctx.reply('❌ Could not start indexer: ' + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: 'HTML' });
+    }
+  });
+
+  controllerBot.command('historypause', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
+    try {
+      await pauseHistoricalIndexer();
+      return showHistoricalIndexer(ctx, false);
+    } catch (error) {
+      return ctx.reply('❌ Could not pause indexer: ' + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: 'HTML' });
+    }
+  });
+
+  controllerBot.command('historyresume', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
+    try {
+      await resumeHistoricalIndexer();
+      return showHistoricalIndexer(ctx, false);
+    } catch (error) {
+      return ctx.reply('❌ Could not resume indexer: ' + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: 'HTML' });
+    }
+  });
+
+  controllerBot.action('admin:history', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
+    await ctx.answerCbQuery();
+    try { return await showHistoricalIndexer(ctx); }
+    catch (error) {
+      return ctx.reply('❌ Could not load historical indexer: ' + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: 'HTML' });
+    }
+  });
+
+  controllerBot.action(/^admin:history:(start|pause|resume)$/, async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
+    try {
+      const action = ctx.match[1];
+      if (action === 'start') await startHistoricalIndexer();
+      else if (action === 'pause') await pauseHistoricalIndexer();
+      else await resumeHistoricalIndexer();
+      await ctx.answerCbQuery(action === 'start' ? 'Indexer enabled.' : action === 'pause' ? 'Pause requested.' : 'Paused jobs resumed.');
+      return showHistoricalIndexer(ctx);
+    } catch (error) {
+      await ctx.answerCbQuery('Indexer action failed.', { show_alert: true });
+      return ctx.reply('❌ ' + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: 'HTML' });
+    }
+  });
+
   controllerBot.command('admin', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
     return showAdminSettings(ctx);
@@ -1741,6 +1823,7 @@ deliveryBot?.command('start', async (ctx) => {
         ...Markup.inlineKeyboard([
           [Markup.button.callback('📝 Post Video', 'admin:post_help'), Markup.button.callback('🧪 Provider Test', 'admin:test_help')],
           [Markup.button.callback('⚙️ Jobs', 'admin:jobs')],
+          [Markup.button.callback('🕘 Historical Indexer', 'admin:history')],
           [Markup.button.callback('⬅️ Back', 'settings:main')],
         ]),
       },
