@@ -10,7 +10,7 @@ import { countUsers, getBroadcastRecipientPage } from './services/users.ts';
 import { javtifulProvider } from './providers/javtiful/index.ts';
 import { extractCodes, normalizeCode } from './services/code.ts';
 import { getAllSettings, setSetting } from './services/settings.ts';
-import { isBotActive, getBot, getBotUsername, getBotRuntimeStatus } from './bot/index.ts';
+import { isBotActive, getControllerBot, getDeliveryBot, getBotUsername, getBotRuntimeStatus } from './bot/index.ts';
 import { indexerWorker } from './workers/indexer.ts';
 import { getScreenshotImagesByCode, getScreenshotImageById } from './services/screenshotImages.ts';
 import { getHttpMetrics, httpMetricsMiddleware } from './services/observability.ts';
@@ -381,7 +381,7 @@ export function createApp(): express.Express {
       const image = await getScreenshotImageById(String(req.params.id || ''));
       if (!image) return res.status(404).send('Screenshot not found');
 
-      const bot = getBot();
+      const bot = getDeliveryBot();
       if (!bot) return res.status(503).send('Telegram image service is unavailable');
 
       const fileUrl = await bot.telegram.getFileLink(image.file_id);
@@ -671,7 +671,7 @@ export function createApp(): express.Express {
       if (!message) return res.status(400).json({ ok: false, error: 'message is required' });
       if (message.length > 4096) return res.status(400).json({ ok: false, error: 'message exceeds Telegram 4096-character limit' });
 
-      const bot = getBot();
+      const bot = getControllerBot();
       if (!bot) return res.status(503).json({ ok: false, error: 'Telegram bot is not active' });
 
       let sent = 0;
