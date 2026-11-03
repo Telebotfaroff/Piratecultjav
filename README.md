@@ -64,7 +64,7 @@ Use the Dockerfile; do not create separate Render services for the bots or index
 Add the required environment variables in the Render dashboard:
 `BOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `DATABASE_URL`, `ADMIN_API_KEY`, `ADMIN_IDS`, and `DUMP_CHAT_ID`. Add `BACKUP_BOT_TOKEN` if you want controller-bot failover. Keep secrets in Render Environment settings, not in the repository.
 
-The Docker image installs Node.js dependencies and the Python dependencies for the optional Pyrogram worker. The historical worker starts automatically only when `DATABASE_URL`, `API_ID`, `API_HASH`, and `SESSION_ENCRYPTION_KEY` are configured. Set `HISTORICAL_INDEXER_ENABLED=false` to disable it. Its process is restarted with backoff if it exits, and it receives SIGTERM during graceful application shutdown.
+The Docker image installs Node.js dependencies and the Python dependencies for the optional Pyrogram worker. The historical worker is disabled by default. Set `HISTORICAL_INDEXER_ENABLED=true` only after `DATABASE_URL`, `API_ID`, `API_HASH`, `SESSION_ENCRYPTION_KEY`, and the encrypted Pyrogram session in the database are ready. Its process is restarted with backoff if it exits, and it receives SIGTERM during graceful application shutdown.
 
 Telegram long polling is the default. Do not configure webhook variables for this deployment.
 
