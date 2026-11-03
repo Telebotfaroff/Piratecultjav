@@ -7,12 +7,12 @@
 - [ ] Record current database migration head and production schema.
 - [ ] Add CI checks for TypeScript, tests, migrations, and Python worker.
 
-## Phase 1 — Web navigation and runtime separation
+## Phase 1 — Web navigation and in-app runtime isolation
 - [x] Make catalog page/search state URL-backed.
 - [x] Restore catalog URL and scroll position after video details Back.
-- [ ] Split process entrypoints for web, controller, and user bot without changing handlers yet.
-- [ ] Make controller and User Bot startup failures independent.
-- [ ] Add separate health/status reporting for each runtime.
+- [x] Keep one Render application entry point; isolate controller and User Bot startup within it.
+- [x] Make controller and User Bot startup failures independent.
+- [x] Add separate controller and delivery status reporting to /health.
 
 ## Phase 2 — Bot configuration and delivery identity
 - [ ] Add secure controller/User Bot configuration service.
@@ -43,8 +43,9 @@
 - [ ] Optimize thumbnail loading and details-page data reuse.
 - [ ] Add navigation and pagination regression tests.
 
-## Phase 6 — Deployment and cutover
-- [ ] Deploy each runtime independently.
+## Phase 6 — Single-service Render deployment and cutover
+- [x] Add one Render Web Service Blueprint and Docker image for the combined Node.js + Python application.
+- [x] Add an opt-in supervised Pyrogram child process with restart backoff and graceful shutdown.
 - [ ] Run shadow indexing on a small source before bulk history scans.
 - [ ] Verify duplicate handling and checkpoint recovery.
 - [ ] Test User Bot replacement and rollback.
