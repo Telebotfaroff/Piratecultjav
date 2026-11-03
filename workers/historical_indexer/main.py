@@ -374,11 +374,13 @@ class HistoricalIndexer:
     async def notify_admins(self, message: str) -> None:
         if not self.client:
             return
-        chat_ids = [
-            value.strip()
-            for value in os.environ.get("HISTORICAL_INDEXER_NOTIFY_CHAT_IDS", "").split(",")
-            if value.strip()
-        ]
+        # Reuse the application's existing ADMIN_IDS by default.
+        # HISTORICAL_INDEXER_NOTIFY_CHAT_IDS can optionally override the recipients.
+        configured_ids = os.environ.get(
+            "HISTORICAL_INDEXER_NOTIFY_CHAT_IDS",
+            os.environ.get("ADMIN_IDS", ""),
+        )
+        chat_ids = [value.strip() for value in configured_ids.split(",") if value.strip()]
         if not chat_ids:
             LOG.warning("Historical failure notification skipped: HISTORICAL_INDEXER_NOTIFY_CHAT_IDS is empty")
             return
