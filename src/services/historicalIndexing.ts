@@ -87,9 +87,9 @@ export async function enqueueHistoricalSource(input: string, requestedBy: number
   if (candidate.toLowerCase().startsWith('www.t.me/')) candidate = candidate.slice(9);
   else if (candidate.toLowerCase().startsWith('t.me/')) candidate = candidate.slice(5);
   const username = candidate.replace(/^@/, '').split('/')[0];
-  const isUsername = /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(username) && !/^-?\\d+$/.test(username);
+  const isUsername = /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(username) && !/^-?\d+$/.test(username);
   const sourceChatId = isUsername ? username : raw;
-  if (!isUsername && !/^-100\\d{5,}$/.test(sourceChatId)) {
+  if (!isUsername && !/^-100\d{5,}$/.test(sourceChatId)) {
     throw new Error('Send a public @username / t.me link or a numeric channel ID like -1001234567890.');
   }
 
