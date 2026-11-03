@@ -175,6 +175,10 @@ export function createApp(): express.Express {
       telegram: {
         configured: telegramConfigured,
         active: telegramActive,
+        controller: telegramRuntime.controllerActive ? 'connected' : 'offline',
+        delivery: !telegramRuntime.deliveryConfigured ? 'not_configured' : telegramRuntime.deliveryActive ? 'connected' : 'offline',
+        deliveryConfigured: telegramRuntime.deliveryConfigured,
+        deliveryActive: telegramRuntime.deliveryActive,
         mode: telegramRuntime.mode,
         fallback: telegramRuntime.fallback,
       },
