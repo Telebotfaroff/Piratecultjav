@@ -59,6 +59,10 @@ jobs:
           NODE_ENV: production
           DATABASE_SSL: 'false'
         run: npm run db:migrate
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
       - name: Check historical indexer Python syntax
         run: python -m compileall -q workers/historical_indexer
       - name: Unit tests
