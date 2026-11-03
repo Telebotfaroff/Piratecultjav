@@ -417,10 +417,17 @@ function CatalogPage({
   navigate: (path: string, initialVideo?: VideoRecord) => void;
 }) {
 
+  const initialParams = new URLSearchParams(window.location.search);
+  const initialPageValue = Number(initialParams.get('paged') || initialParams.get('page') || '1');
+  const initialPage = Number.isInteger(initialPageValue) && initialPageValue > 0 ? initialPageValue : 1;
+  const initialQuery = (initialParams.get('q') || '').trim();
   const [videos, setVideos] = useState<VideoRecord[]>([]);
-  const [searchInput, setSearchInput] = useState('');
-  const [query, setQuery] = useState('');
-  const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState(initialQuery);
+  const [query, setQuery] = useState(initialQuery);
+  const [page, setPage] = useState(initialPage);
+  const [restoreScrollY, setRestoreScrollY] = useState<number | null>(
+    () => typeof window.history.state?.scrollY === 'number' ? window.history.state.scrollY : null,
+  );
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -463,21 +470,57 @@ function CatalogPage({
     return () => controller.abort();
   }, [fetchVideos, query, page]);
 
+  // Catalog URL is the source of truth when navigating through browser history.
+  useEffect(() => {
+    const syncFromHistory = () => {
+      const params = new URLSearchParams(window.location.search);
+      const rawPage = Number(params.get('paged') || params.get('page') || '1');
+      const nextPage = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
+      const nextQuery = (params.get('q') || '').trim();
+      setPage(nextPage);
+      setQuery(nextQuery);
+      setSearchInput(nextQuery);
+      setRestoreScrollY(typeof window.history.state?.scrollY === 'number' ? window.history.state.scrollY : 0);
+    };
+    window.addEventListener('popstate', syncFromHistory);
+    return () => window.removeEventListener('popstate', syncFromHistory);
+  }, []);
+
+  useEffect(() => {
+    if (!loading && restoreScrollY !== null) {
+      window.scrollTo({ top: restoreScrollY, behavior: 'instant' });
+      setRestoreScrollY(null);
+    }
+  }, [loading, restoreScrollY]);
+
+  const pushCatalogUrl = (nextQuery: string, nextPage: number) => {
+    const params = new URLSearchParams();
+    if (nextPage > 1) params.set('paged', String(nextPage));
+    if (nextQuery) params.set('q', nextQuery);
+    const search = params.toString();
+    const url = search ? '/?' + search : '/';
+    window.history.pushState({ catalog: true, scrollY: 0 }, '', url);
+  };
+
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
+    const nextQuery = searchInput.trim();
     setPage(1);
-    setQuery(searchInput.trim());
+    setQuery(nextQuery);
+    pushCatalogUrl(nextQuery, 1);
   };
 
   const clearSearch = () => {
     setSearchInput('');
     setQuery('');
     setPage(1);
+    pushCatalogUrl('', 1);
   };
 
   const goToPage = (next: number) => {
     const target = Math.min(Math.max(next, 1), totalPages);
     setPage(target);
+    pushCatalogUrl(query, target);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -594,13 +637,24 @@ export default function App() {
   }, []);
 
   const navigate = useCallback((path: string, initialVideo?: VideoRecord) => {
-    if (window.location.pathname !== path) {
-      window.history.pushState({}, '', path);
+    const currentUrl = window.location.pathname + window.location.search;
+    if (currentUrl !== path) {
+      // Save the catalog scroll position on the history entry we are leaving.
+      window.history.replaceState(
+        { ...(window.history.state || {}), scrollY: window.scrollY },
+        '',
+        window.location.href,
+      );
+      window.history.pushState(
+        { fromCatalog: path.startsWith('/video/'), scrollY: 0 },
+        '',
+        path,
+      );
     }
     if (initialVideo) {
       setActiveVideo(initialVideo);
     }
-    setCurrentPath(path);
+    setCurrentPath(window.location.pathname);
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
 
@@ -612,7 +666,13 @@ export default function App() {
       <VideoDetails
         id={videoId}
         initialVideo={matchedInitial}
-        onBack={() => navigate('/')}
+        onBack={() => {
+          if (window.history.state?.fromCatalog) {
+            window.history.back();
+          } else {
+            navigate('/');
+          }
+        }}
       />
     );
   }
