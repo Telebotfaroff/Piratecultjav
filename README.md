@@ -47,18 +47,26 @@ The development command runs the TypeScript server and Vite middleware.
 
 ## Production build and start
 
-Install dependencies including development dependencies in the build environment, then run:
+The build creates the frontend in `dist/` and bundles the server into `dist-server/server.js`. The production start command runs the compiled server with Node.js.
 
-```bash
-npm install
-npm run lint
-npm run build
-NODE_ENV=production npm start
-```
+### Render deployment — one service
 
-The build creates the frontend in `dist/` and bundles the server into `dist-server/server.js`. The production start command runs the compiled server with Node.js, so the production runtime does not depend on the TypeScript runner.
+This repository includes a `Dockerfile` and `render.yaml`. Connect the repository to Render and create the Blueprint from `render.yaml`, or create one **Web Service** manually using the Docker runtime. Deploy the `V2` branch.
 
-Set the deployment platform's start command to `npm start` and its build command to `npm install && npm run lint && npm run build`.
+Render runs one container and one application entry point:
+- Express website and API
+- Controller and delivery Telegram bots using long polling
+- Existing Node.js indexing worker
+- Optional Pyrogram historical indexer as a supervised child process
+
+Use the Dockerfile; do not create separate Render services for the bots or indexers. Render supplies `PORT` automatically, and the service health check uses `/health`.
+
+Add the required environment variables in the Render dashboard:
+`BOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `DATABASE_URL`, `ADMIN_API_KEY`, `ADMIN_IDS`, and `DUMP_CHAT_ID`. Add `BACKUP_BOT_TOKEN` if you want controller-bot failover. Keep secrets in Render Environment settings, not in the repository.
+
+The Docker image installs Node.js dependencies and the Python dependencies for the optional Pyrogram worker. The historical worker starts automatically only when `DATABASE_URL`, `API_ID`, `API_HASH`, and `SESSION_ENCRYPTION_KEY` are configured. Set `HISTORICAL_INDEXER_ENABLED=false` to disable it. Its process is restarted with backoff if it exits, and it receives SIGTERM during graceful application shutdown.
+
+Telegram long polling is the default. Do not configure webhook variables for this deployment.
 
 ## Database setup
 
@@ -84,7 +92,7 @@ Each worker slot has a unique owner ID. Jobs are claimed with PostgreSQL `FOR UP
 
 ## Runtime resilience and graceful shutdown
 
-Telegram long polling is the default transport in every environment, including Render. The service clears any existing webhook before starting polling, so Telegram updates are received through `getUpdates`. When both `BOT_TOKEN` and `BACKUP_BOT_TOKEN` are configured, startup validates the selected bot and can fall back to the other token if validation fails. A runtime launch failure on the primary bot triggers one automatic switch to the backup bot per process. Polling also runs a Telegram token-health check every 60 seconds; two consecutive failures can trigger the same one-time primary-to-backup switch. The backup bot must be an administrator in the dump channel and have the same required channel permissions. Keep the primary and backup bot tokens separate and rotate them independently.
+Telegram long polling is the default transport in every environment. The service clears any existing webhook before starting polling, so Telegram updates are received through `getUpdates`. When both `BOT_TOKEN` and `BACKUP_BOT_TOKEN` are configured, startup validates the selected bot and can fall back to the other token if validation fails. A runtime launch failure on the primary bot triggers one automatic switch to the backup bot per process. Polling also runs a Telegram token-health check every 60 seconds; two consecutive failures can trigger the same one-time primary-to-backup switch. The backup bot must be an administrator in the dump channel and have the same required channel permissions. Keep the primary and backup bot tokens separate and rotate them independently.
 
 On `SIGTERM` or `SIGINT`, the server stops accepting new HTTP connections, stops Telegram polling, and asks the indexer to finish its claimed jobs before exiting. The shutdown has a 15-second hard timeout; jobs that cannot finish are recovered later through their expired leases.
 
@@ -157,5 +165,5 @@ sudo systemctl restart telegram-bot-service
 - Keep secrets in environment variables.
 - Use HTTPS when exposing the service publicly.
 - Keep Node.js and dependencies updated.
-- Telegram long polling is always used by default. Remove any old `WEBHOOK_URL` and `WEBHOOK_SECRET` values from Render to keep the environment configuration clean; they are ignored by the startup entry point.
+- Telegram long polling is always used by default. `WEBHOOK_URL` and `WEBHOOK_SECRET` are not needed for the single-service Render deployment.
 - Monitor the readiness endpoint and application logs after deployment.
