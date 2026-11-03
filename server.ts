@@ -3,7 +3,7 @@ import express from 'express';
 import { createApp } from './src/app.ts';
 import { config } from './src/config.ts';
 import { indexerWorker } from './src/workers/indexer.ts';
-import { startBotPolling, startBotWebhook, stopBotRuntime } from './src/bot/index.ts';
+import { startBotPolling, stopBotRuntime } from './src/bot/index.ts';
 import { runDatabaseMigrations } from './src/database/migrate.ts';
 
 async function startServer() {
@@ -56,12 +56,12 @@ async function startServer() {
     console.log(`[PiratecultJAV] Health check available at http://0.0.0.0:${port}/health`);
 
     if (config.botToken || config.backupBotToken) {
-      // If either webhook variable is supplied, require the complete webhook configuration.
-      // Otherwise retain polling as a backwards-compatible local/development default.
-      const webhookRequested = Boolean(config.webhookUrl || config.webhookSecret);
-      const startBot = webhookRequested ? startBotWebhook(app) : startBotPolling();
-      startBot.catch(err => {
-        console.warn(`[Server] Could not initialize Telegram bot ${webhookRequested ? 'webhook' : 'polling'}:`, err instanceof Error ? err.message : String(err));
+      // Long polling is the default transport in every environment. WEBHOOK_*
+      // variables are intentionally ignored so Render cannot accidentally switch
+      // this deployment back to webhook mode.
+      console.log('[Server] Starting Telegram bot with long polling.');
+      startBotPolling().catch(err => {
+        console.warn('[Server] Could not initialize Telegram bot polling:', err instanceof Error ? err.message : String(err));
       });
     } else {
       console.log('[Server] BOT_TOKEN / BACKUP_BOT_TOKEN not provided; Telegram bot inactive.');
