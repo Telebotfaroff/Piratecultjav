@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: piratecultjav
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
