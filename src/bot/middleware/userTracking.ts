@@ -1,6 +1,7 @@
 import { Telegraf } from 'telegraf';
 import { trackTelegramUser } from '../../services/users.ts';
 import { getSetting } from '../../services/settings.ts';
+import { isAdmin } from '../../config.ts';
 
 /** Saves user identity updates and filters blocked users before command handlers run. */
 export function registerUserTrackingMiddleware(bot: Telegraf): void {
@@ -47,6 +48,16 @@ export function registerUserTrackingMiddleware(bot: Telegraf): void {
       }
 
       if (trackedUser.is_blocked) return;
+    }
+
+    if (ctx.from && !isAdmin(ctx.from.id)) {
+      const maintenance = await getSetting<boolean>('maintenance_mode', false);
+      if (maintenance) {
+        try {
+          await ctx.reply('⚠️ The bot is currently under maintenance. Please check back later.');
+        } catch {}
+        return;
+      }
     }
 
     return next();
