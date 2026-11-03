@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanTitle, extractCodes, extractVideoIdFromStartPayload, normalizeCode } from '../src/services/code.ts';
+import { isAdminApiKeyValid } from '../src/config.ts';
 
 test('normalizes common JAV code separators and padding', () => {
   assert.equal(normalizeCode('adn 01'), 'ADN-001');
@@ -27,4 +28,15 @@ test('extracts UUID and legacy numeric video IDs from website start payloads', (
   assert.equal(extractVideoIdFromStartPayload('v_12345'), '12345');
   assert.equal(extractVideoIdFromStartPayload('ADN-001'), null);
   assert.equal(extractVideoIdFromStartPayload('v_not-a-valid-id'), null);
+});
+
+test('rejects missing, short, and example admin API keys', () => {
+  assert.equal(isAdminApiKeyValid(''), false);
+  assert.equal(isAdminApiKeyValid('short-key'), false);
+  assert.equal(isAdminApiKeyValid('change-this-to-a-long-random-secret'), false);
+});
+
+test('accepts admin API keys with at least 32 characters', () => {
+  assert.equal(isAdminApiKeyValid('x'.repeat(32)), true);
+  assert.equal(isAdminApiKeyValid('x'.repeat(64)), true);
 });
