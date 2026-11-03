@@ -82,8 +82,10 @@ export async function enqueueHistoricalSource(input: string, requestedBy: number
   const supabase = getSupabase();
   const raw = input.trim();
   let candidate = raw.trim();
-  candidate = candidate.replace(/^https?:/i, '').replace(/^\\/\\//, '');
-  candidate = candidate.replace(/^www\\.t\\.me\\//i, '').replace(/^t\\.me\\//i, '');
+  candidate = candidate.replace(/^https?:/i, '');
+  if (candidate.startsWith('//')) candidate = candidate.slice(2);
+  if (candidate.toLowerCase().startsWith('www.t.me/')) candidate = candidate.slice(9);
+  else if (candidate.toLowerCase().startsWith('t.me/')) candidate = candidate.slice(5);
   const username = candidate.replace(/^@/, '').split('/')[0];
   const isUsername = /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(username) && !/^-?\\d+$/.test(username);
   const sourceChatId = isUsername ? username : raw;
