@@ -73,3 +73,5 @@ jobs:
         run: npm test
       - name: Build frontend and server
         run: npm run build
+      - name: Build the single-service Render image
+        run: docker build -t piratecultjav:ci .
