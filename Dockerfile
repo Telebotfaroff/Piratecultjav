@@ -18,6 +18,7 @@ RUN npm run lint \
     && npm run build \
     && python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir -r workers/historical_indexer/requirements.txt \
+    && /opt/venv/bin/python -c "import asyncpg, pyrogram; print('Historical indexer dependencies verified')" \
     && npm prune --omit=dev
 
 ENV PATH="/opt/venv/bin:${PATH}"
