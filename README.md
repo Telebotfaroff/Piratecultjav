@@ -20,10 +20,14 @@ Required server-side settings include:
 BOT_TOKEN=
 SUPABASE_URL=
 SUPABASE_SECRET_KEY=
-ADMIN_API_KEY=
+ADMIN_API_KEY= # unique random secret, at least 32 characters
 DUMP_CHAT_ID=
 ADMIN_IDS=
 PORT=3000
+
+# Render uses one trusted reverse-proxy hop by default in production.
+# Set TRUST_PROXY_HOPS only when your deployment has a different known proxy chain.
+# TRUST_PROXY_HOPS=1
 
 # Recommended on Render: set both to enable Telegram webhook mode
 WEBHOOK_URL=https://piratecultjav.onrender.com
@@ -31,7 +35,7 @@ WEBHOOK_SECRET=generate-a-strong-random-secret
 WEBHOOK_PATH=/telegram-webhook
 ```
 
-Keep `.env` out of version control. Never expose bot tokens or the Supabase secret key in browser code.
+Keep `.env` out of version control. Never expose bot tokens or the Supabase secret key in browser code. `ADMIN_API_KEY` must be a unique random value with at least 32 characters; the service rejects missing, short, or example keys.
 
 ## Install and run locally
 
