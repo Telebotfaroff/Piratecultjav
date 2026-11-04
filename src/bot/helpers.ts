@@ -49,7 +49,27 @@ async function notifyNotFound(ctx: any, query: string, source: string): Promise<
   }
 }
 
-async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, source: 'deep_link' | 'search' | 'callback' | 'unknown' = 'unknown', options: { suppressDeleteReminderMessage?: boolean } = {}) {
+async function sendReferralNudge(ctx: any): Promise<void> {
+  try {
+    await ctx.reply(
+      '😏 <b>Enjoying the goods?</b>\n\n' +
+      'Don’t be selfish, you little troublemaker. 😈 Bring a partner-in-crime into the fun!\n\n' +
+      '🎁 If your friend joins through your referral link and successfully gets their first video, you earn <b>+1 day of unlimited access</b>.\n\n' +
+      '<i>Good friends share links. Best friends share the blame. 😂</i>',
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('😈 Recruit a Partner-in-Crime', 'user:referral')],
+          [Markup.button.callback('🙈 Maybe Later', 'referral:dismiss')],
+        ]),
+      },
+    );
+  } catch (err) {
+    console.warn('[Referral] Could not show post-delivery prompt:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, source: 'deep_link' | 'search' | 'callback' | 'unknown' = 'unknown', options: { suppressDeleteReminderMessage?: boolean; suppressReferralPrompt?: boolean } = {}) {
   let quotaConsumed = false;
   let quotaReservationId: string | null = null;
   try {
@@ -185,26 +205,11 @@ async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, s
       }
     }
 
-    // A playful referral nudge appears only after the video was delivered successfully.
-    if (ctx.from && !isAdmin(ctx.from.id)) {
-      try {
-        await ctx.reply(
-          '😏 <b>Enjoying the goods?</b>\n\n' +
-          'Don’t be selfish, you little troublemaker. 😈 Bring a partner-in-crime into the fun!\n\n' +
-          '🎁 If your friend joins through your referral link and successfully gets their first video, you earn <b>+1 day of unlimited access</b>.\n\n' +
-          '<i>Good friends share links. Best friends share the blame. 😂</i>',
-          {
-            parse_mode: 'HTML',
-            ...Markup.inlineKeyboard([
-              [Markup.button.callback('😈 Recruit a Partner-in-Crime', 'user:referral')],
-              [Markup.button.callback('🙈 Maybe Later', 'referral:dismiss')],
-            ]),
-          },
-        );
-      } catch (err) {
-        console.warn('[Referral] Could not show post-delivery prompt:', err instanceof Error ? err.message : String(err));
-      }
+    // Bulk delivery suppresses per-video nudges and sends one after the batch.
+    if (ctx.from && !isAdmin(ctx.from.id) && !options.suppressReferralPrompt) {
+      await sendReferralNudge(ctx);
     }
+    return true;
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[TelegramBot] Failed direct video delivery for ${identifier}:`, errMsg);
@@ -572,6 +577,7 @@ async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: strin
     let offset = 0;
     let total = 0;
     let processed = 0;
+    let successfulDeliveries = 0;
     let exhaustedQuota = false;
     let hasResults = false;
 
@@ -601,9 +607,11 @@ async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: strin
           }
         }
 
-        await deliverVideoToUser(bot, ctx, String(video.id), 'search', {
+        const delivered = await deliverVideoToUser(bot, ctx, String(video.id), 'search', {
           suppressDeleteReminderMessage: true,
+          suppressReferralPrompt: true,
         });
+        if (delivered === true) successfulDeliveries++;
         processed++;
         if (Number.isFinite(localRemaining)) localRemaining--;
 
@@ -620,6 +628,10 @@ async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: strin
     if (!hasResults) {
       await notifyNotFound(ctx, query, 'download all search results');
       return ctx.reply('❌ No available videos were found for <b>' + escapeHtml(query) + '</b>.', { parse_mode: 'HTML' });
+    }
+
+    if (successfulDeliveries > 0 && !isAdmin(ctx.from.id)) {
+      await sendReferralNudge(ctx);
     }
 
     const summary = [
