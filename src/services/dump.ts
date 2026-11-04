@@ -18,7 +18,7 @@ export async function sendDumpVideoToUser(
   dumpChatId: string | number,
   videoMessageId: number,
   caption?: string,
-  copyOptions: Record<string, unknown> = {},
+  copyOptions: any = {},
 ): Promise<boolean> {
   try {
     await withTelegramRetry(
