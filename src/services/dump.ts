@@ -8,18 +8,21 @@ export interface SendToDumpResult {
 }
 
 /**
- * Copies a stored video from the dump channel to a target Telegram user
+ * Copies a stored video from the dump channel to a target Telegram user.
+ * Optional Telegram copy options allow callers to attach caption formatting
+ * and inline keyboards to the delivered message.
  */
 export async function sendDumpVideoToUser(
   bot: Telegraf,
   targetChatId: number | string,
   dumpChatId: string | number,
   videoMessageId: number,
-  caption?: string
+  caption?: string,
+  copyOptions: Record<string, unknown> = {},
 ): Promise<boolean> {
   try {
     await withTelegramRetry(
-      () => bot.telegram.copyMessage(targetChatId, dumpChatId, videoMessageId, { caption }),
+      () => bot.telegram.copyMessage(targetChatId, dumpChatId, videoMessageId, { caption, ...copyOptions }),
       { label: `dump-copy:${dumpChatId}:${videoMessageId}` },
     );
     return true;
