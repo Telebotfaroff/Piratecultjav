@@ -154,7 +154,7 @@ async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, s
     const { getAutoDeleteSeconds, formatAutoDeleteDuration } = await import('../services/messageDeleteTimer.ts');
     const deleteAfterSeconds = await getAutoDeleteSeconds();
     const deleteReminder = deleteAfterSeconds > 0
-      ? `\n\n⏳ Auto-deletes in ${formatAutoDeleteDuration(deleteAfterSeconds)} — please forward it now to keep it.`
+      ? `\n⏳ Auto-deletes in ${formatAutoDeleteDuration(deleteAfterSeconds)} — forward to Saved Messages to keep it.`
       : '';
 
     if (deleteAfterSeconds > 0 && !options.suppressDeleteReminderMessage) {
@@ -168,13 +168,30 @@ async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, s
       }
     }
 
-    // 5. Directly deliver the stored video to the user
+    // Keep the caption compact and within Telegram's 1,024-character caption limit.
+    const shortTitle = Array.from(String(video.title || '')).slice(0, 650).join('');
+    const caption = [
+      `🎬 <b>${escapeHtml(video.code)}</b>`,
+      escapeHtml(shortTitle),
+      '',
+      '📢 More videos: https://t.me/piratedcult',
+      deleteReminder,
+    ].filter(Boolean).join('\n');
+
+    // 5. Deliver through the delivery bot with both a visible channel link
+    // and a dedicated Join Channel button.
     await sendDumpVideoToUser(
       bot,
       ctx.chat!.id,
       video.dump_chat_id,
       video.video_message_id,
-      `🎬 *${video.code}* - ${video.title}${deleteReminder}`
+      caption,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('📢 Join @piratedcult', 'https://t.me/piratedcult')],
+        ]),
+      },
     );
 
     // Telegram has accepted the copy: never refund this quota even if the
