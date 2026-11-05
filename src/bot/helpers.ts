@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { Telegraf, Markup } from 'telegraf';
 import { config, isAdmin } from '../config.ts';
 import { normalizeCode, cleanActressList, cleanTitle } from '../services/code.ts';
-import { searchVideos, getVideoById, getVideoByCode, countVideos, updateVideoMetadata, deleteVideo, updateVideoStatus } from '../services/videos.ts';
+import { searchVideos, getVideoById, getVideoByCode, countVideos, listVideosWithoutThumbnail, updateVideoMetadata, deleteVideo, updateVideoStatus } from '../services/videos.ts';
 import { countJobs } from '../services/indexJobs.ts';
 import { consumeVideoDownload, refundVideoDownload, markVideoDownloadDelivered, getUserDashboard, getReferralLeaderboard, completeReferral, countUsers } from '../services/users.ts';
 import { checkUserForceSub, getAllForceSubChannels } from '../services/forceSub.ts';
@@ -727,6 +727,7 @@ async function showAdminSettings(ctx: any) {
     [Markup.button.callback('🕘 History', 'admin:history'), Markup.button.callback('💰 Monetization', 'admin:monetization')],
     [Markup.button.callback('📥 Quotas', 'admin:quota'), Markup.button.callback('📣 Broadcast', 'settings:broadcast')],
     [Markup.button.callback('🔒 Force-sub', 'settings:forcesub'), Markup.button.callback('🧾 Missing', 'admin:missedcodes')],
+    [Markup.button.callback('🖼️ No Screenshot', 'admin:missingthumbnails')],
     [Markup.button.callback('🖼️ Missing Thumbnail Channel', 'missingchannel:manage')],
     [Markup.button.callback('🔔 Alerts', 'settings:notifications'), Markup.button.callback('🚚 Delivery', 'settings:deliverybot')],
     [Markup.button.callback('🛠️ System', 'admin:system'), Markup.button.callback('🔄 Recovery', 'settings:recovery')],
