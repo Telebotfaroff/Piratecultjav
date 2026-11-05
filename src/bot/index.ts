@@ -494,7 +494,7 @@ deliveryBot?.command('start', async (ctx) => {
           `${(page - 1) * pageSize + index + 1}. <code>${escapeHtml(item.code)}</code> — ${escapeHtml(item.failure_reason || 'No metadata')}`
         ) : ['No missed codes recorded yet.']),
         '',
-        'Tap a code button to add its title, thumbnail URL, and video manually.'
+        'Use Add to submit the title and video, or Thumbnail to update the image on the existing catalog record.'
       ];
       const rows: any[] = result.codes.flatMap(item => [
         [
@@ -2874,7 +2874,7 @@ deliveryBot?.command('start', async (ctx) => {
 
     if (session.action === 'missed_thumbnail') {
       const code = String(session.payload?.code || '');
-      if ('text' in ctx.message && /^\\/cancel(?:@\\w+)?$/i.test(ctx.message.text.trim())) {
+      if ('text' in ctx.message && /^\/cancel(?:@\w+)?$/i.test(ctx.message.text.trim())) {
         await clearAdminSession(ctx.from.id);
         return ctx.reply('Thumbnail update cancelled.');
       }
