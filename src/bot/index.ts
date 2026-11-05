@@ -3,7 +3,7 @@ import type { Express } from 'express';
 import { Telegraf, Markup } from 'telegraf';
 import { config, isAdmin } from '../config.ts';
 import { normalizeCode, extractCodes, extractVideoIdFromStartPayload, cleanActressList, cleanTitle } from '../services/code.ts';
-import { searchVideos, getVideoById, getVideoByCode, upsertVideoFromProvider, countVideos, updateVideoMetadata, deleteVideo, updateVideoStatus } from '../services/videos.ts';
+import { searchVideos, getVideoById, getVideoByCode, upsertVideoFromProvider, countVideos, updateVideoMetadata, updateVideoThumbnailByCode, deleteVideo, updateVideoStatus } from '../services/videos.ts';
 import { createIndexJob, countJobs, getRecentJobs, retryJob } from '../services/indexJobs.ts';
 import { upsertUser, isUserBlocked, setUserBlocked, countUsers, getBroadcastRecipientPage, getUser, getUserDashboard, getReferralLeaderboard, redeemPromoCode, createPromoCode, listPremiumPayments, listPromoCodes, setPromoCodeActive, consumeVideoDownload, refundVideoDownload, getDownloadQuotaSettings, setDownloadQuotaSettings, registerReferral, completeReferral, setUserPlan } from '../services/users.ts';
 import { checkUserForceSub, getAllForceSubChannels, upsertForceSubChannel, updateForceSubChannel, deleteForceSubChannel, createForceSubInviteLink } from '../services/forceSub.ts';
@@ -496,8 +496,11 @@ deliveryBot?.command('start', async (ctx) => {
         '',
         'Tap a code button to add its title, thumbnail URL, and video manually.'
       ];
-      const rows: any[] = result.codes.map(item => [
-        Markup.button.callback('➕ Add ' + item.code.slice(0, 30), 'missedcodes:add:' + item.code.slice(0, 40))
+      const rows: any[] = result.codes.flatMap(item => [
+        [
+          Markup.button.callback('➕ Add ' + item.code.slice(0, 24), 'missedcodes:add:' + item.code.slice(0, 40)),
+          Markup.button.callback('🖼️ Thumbnail', 'missedcodes:thumb:' + item.code.slice(0, 40)),
+        ],
       ]);
       const nav: any[] = [];
       if (page > 1) nav.push(Markup.button.callback('⬅️ Previous', 'missedcodes:page:' + (page - 1)));
@@ -555,6 +558,17 @@ deliveryBot?.command('start', async (ctx) => {
     await ctx.answerCbQuery('Starting manual post…');
     await setAdminSession(ctx.from!.id, 'post', 'awaiting_manual_title', { code });
     return ctx.reply(`✍️ Enter the title for <code>${escapeHtml(code)}</code>, or /cancel to stop.`, { parse_mode: 'HTML' });
+  });
+
+  controllerBot.action(/^missedcodes:thumb:([A-Z0-9_-]{1,40})$/, async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    const code = normalizeCode(ctx.match[1]);
+    await ctx.answerCbQuery('Waiting for thumbnail…');
+    await setAdminSession(ctx.from!.id, 'missed_thumbnail', 'awaiting_photo_or_url', { code });
+    return ctx.reply(
+      `🖼️ Send a thumbnail photo for <code>${escapeHtml(code)}</code>, or send an HTTP(S) image URL. The image will be stored in the dump channel and linked to the existing video record.\n\nUse /cancel to stop.`,
+      { parse_mode: 'HTML' },
+    );
   });
 
   controllerBot.command('payments', async (ctx) => {
@@ -2856,6 +2870,49 @@ deliveryBot?.command('start', async (ctx) => {
     const session = await getAdminSession(ctx.from.id);
     if (!session) {
       return next();
+    }
+
+    if (session.action === 'missed_thumbnail') {
+      const code = String(session.payload?.code || '');
+      if ('text' in ctx.message && /^\\/cancel(?:@\\w+)?$/i.test(ctx.message.text.trim())) {
+        await clearAdminSession(ctx.from.id);
+        return ctx.reply('Thumbnail update cancelled.');
+      }
+
+      try {
+        let sent: any;
+        if ('photo' in ctx.message && ctx.message.photo.length) {
+          const photo = ctx.message.photo[ctx.message.photo.length - 1];
+          sent = await controllerBot.telegram.sendPhoto(config.dumpChatId, photo.file_id, {
+            caption: `[THUMBNAIL] ${code}`,
+          });
+        } else if ('text' in ctx.message) {
+          const url = ctx.message.text.trim();
+          let parsed: URL;
+          try { parsed = new URL(url); } catch { return ctx.reply('Send a photo or a valid HTTP(S) image URL, or /cancel.'); }
+          if (!['http:', 'https:'].includes(parsed.protocol)) {
+            return ctx.reply('Only HTTP(S) image URLs are supported. Send a photo or URL, or /cancel.');
+          }
+          sent = await controllerBot.telegram.sendPhoto(config.dumpChatId, url, {
+            caption: `[THUMBNAIL] ${code}`,
+          });
+        } else {
+          return ctx.reply('Please send a photo (not as a document) or an HTTP(S) image URL, or /cancel.');
+        }
+
+        const photo = sent.photo?.[sent.photo.length - 1];
+        if (!photo?.file_id) throw new Error('Telegram did not return a thumbnail file_id.');
+        await updateVideoThumbnailByCode(code, photo.file_id, sent.message_id);
+        await clearAdminSession(ctx.from.id);
+        return ctx.reply(
+          `✅ Thumbnail saved for <code>${escapeHtml(code)}</code>.\n🖼️ Stored in the dump channel and linked to the existing video record.`,
+          { parse_mode: 'HTML' },
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[MissedCodes] Thumbnail update failed for ${code}:`, message);
+        return ctx.reply(`❌ Could not save thumbnail: ${escapeHtml(message)}\nYou can retry by tapping Thumbnail again, or /cancel.`, { parse_mode: 'HTML' });
+      }
     }
 
     if (session.action === 'notification_channel') {
