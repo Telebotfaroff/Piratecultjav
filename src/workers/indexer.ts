@@ -9,6 +9,7 @@ import {
 import { javtifulProvider, ProviderNotFoundError, ProviderTemporaryError } from '../providers/javtiful/index.ts';
 import { upsertVideoFromProvider } from '../services/videos.ts';
 import { logEvent } from '../services/observability.ts';
+import { recordMissedCode } from '../services/missedCodes.ts';
 
 const clampInt = (value: string | undefined, fallback: number, min: number, max: number): number => {
   const parsed = Number.parseInt(value || '', 10);
@@ -189,6 +190,17 @@ export class IndexerWorker {
           this.failedJobs++;
           this.lastJobAt = new Date().toISOString();
           this.lastJobStatus = 'failed';
+          try {
+            await recordMissedCode(job.code, `Not found on Javtiful: ${message}`);
+          } catch (recordErr) {
+            // A missed-code logging failure must not interrupt indexing or status persistence.
+            console.warn(`[IndexerWorker] Could not record missed code ${job.code}:`, recordErr);
+            logEvent('error', 'indexer.missed_code_record_failed', {
+              jobId: job.id,
+              code: job.code,
+              errorName: recordErr instanceof Error ? recordErr.name : 'UnknownError',
+            });
+          }
         }
         try {
           await upsertVideoFromProvider({
