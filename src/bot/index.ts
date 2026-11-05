@@ -1149,17 +1149,17 @@ deliveryBot?.command('start', async (ctx) => {
 
   controllerBot.command('setquota', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized.');
-    const parts = ctx.message.text.trim().split(/\s+/).slice(1);
+    const parts = ctx.message.text.trim().split(/\\s+/).slice(1);
     try {
       // Keep the original two-number command working, while also allowing one-plan edits.
-      if (parts.length === 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+      if (parts.length === 2 && /^\\d+$/.test(parts[0]) && /^\\d+$/.test(parts[1])) {
         const free = Number(parts[0]);
         const semiPremium = Number(parts[1]);
         if (![free, semiPremium].every(value => Number.isInteger(value) && value >= 0 && value <= 100000)) {
           return ctx.reply('Usage: /setquota <free_limit> <semi_premium_limit>\nExample: /setquota 20 40');
         }
         await setDownloadQuotaSettings({ free, semi_premium: semiPremium });
-      } else if (parts.length === 2 && /^(free|semi_premium)$/i.test(parts[0]) && /^\d+$/.test(parts[1])) {
+      } else if (parts.length === 2 && /^(free|semi_premium)$/i.test(parts[0]) && /^\\d+$/.test(parts[1])) {
         const plan = parts[0].toLowerCase() as 'free' | 'semi_premium';
         const value = Number(parts[1]);
         if (!Number.isInteger(value) || value < 0 || value > 100000) {
@@ -1485,7 +1485,7 @@ deliveryBot?.command('start', async (ctx) => {
       await setSetting('notification_join_premium_channel', '');
       return ctx.reply('🔕 User and Premium notifications disabled.');
     }
-    if (!/^-?\d+$/.test(value)) return ctx.reply('Usage: /setjoinchannel <channel_id> or /setjoinchannel off');
+    if (!/^-?\\d+$/.test(value)) return ctx.reply('Usage: /setjoinchannel <channel_id> or /setjoinchannel off');
     return configureNotificationChannel(ctx, 'join', value);
   });
 
@@ -1496,7 +1496,7 @@ deliveryBot?.command('start', async (ctx) => {
       await setSetting('notification_not_found_channel', '');
       return ctx.reply('🔕 Not-found notifications disabled.');
     }
-    if (!/^-?\d+$/.test(value)) return ctx.reply('Usage: /setnotfoundchannel <channel_id> or /setnotfoundchannel off');
+    if (!/^-?\\d+$/.test(value)) return ctx.reply('Usage: /setnotfoundchannel <channel_id> or /setnotfoundchannel off');
     return configureNotificationChannel(ctx, 'notfound', value);
   });
 
@@ -1610,7 +1610,7 @@ deliveryBot?.command('start', async (ctx) => {
     rows.push([Markup.button.callback('➕ Add another channel', 'admin:history:add')]);
     rows.push([Markup.button.callback('🔄 Refresh sources', 'admin:history:sources'), Markup.button.callback('⬅️ History', 'admin:history')]);
     return ctx.reply(
-      '<b>SELECT CHANNELS TO INDEX</b>\n\nTap a channel to queue its full history. You can return here and select additional channels; active jobs are not duplicated.',
+      '<b>SELECT CHANNELS TO INDEX</b>\\n\\nTap a channel to queue its full history. You can return here and select additional channels; active jobs are not duplicated.',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) },
     );
   });
@@ -1624,7 +1624,7 @@ deliveryBot?.command('start', async (ctx) => {
       await ctx.answerCbQuery(result.alreadyQueued ? 'Already queued or running.' : 'Channel queued.');
       await ctx.reply(
         (result.alreadyQueued ? 'ℹ️ This channel already has an active job.' : '✅ Channel queued for full-history indexing.') +
-        '\n\n📡 <b>' + label + '</b>\n🆔 Job: <code>#' + result.jobId + '</code>',
+        '\\n\\n📡 <b>' + label + '</b>\\n🆔 Job: <code>#' + result.jobId + '</code>',
         { parse_mode: 'HTML' },
       );
       const sources = await listHistoricalSources(20);
@@ -1640,7 +1640,7 @@ deliveryBot?.command('start', async (ctx) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await ctx.answerCbQuery('Could not queue channel.', { show_alert: true });
-      return ctx.reply('❌ <b>Historical indexing error</b>\n' + escapeHtml(message), { parse_mode: 'HTML' });
+      return ctx.reply('❌ <b>Historical indexing error</b>\\n' + escapeHtml(message), { parse_mode: 'HTML' });
     }
   });
 
@@ -2000,7 +2000,7 @@ deliveryBot?.command('start', async (ctx) => {
     }
   });
 
-  controllerBot.action(/^admin:quota:save:(free|semi_premium):(\d+)$/, async (ctx) => {
+  controllerBot.action(/^admin:quota:save:(free|semi_premium):(\\d+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const plan = ctx.match[1] as 'free' | 'semi_premium';
     const value = Number(ctx.match[2]);
@@ -3348,7 +3348,7 @@ deliveryBot?.command('start', async (ctx) => {
       }
       const type = session.payload?.type === 'notfound' ? 'notfound' : 'join';
       let channelId = '';
-      if ('text' in ctx.message && /^-?\d+$/.test(ctx.message.text.trim())) {
+      if ('text' in ctx.message && /^-?\\d+$/.test(ctx.message.text.trim())) {
         channelId = ctx.message.text.trim();
       } else if ('forward_origin' in ctx.message && ctx.message.forward_origin?.type === 'channel') {
         channelId = String(ctx.message.forward_origin.chat.id);
@@ -3406,7 +3406,7 @@ deliveryBot?.command('start', async (ctx) => {
       }
       if (session.step === 'awaiting_days') {
         const days = Number(input);
-        if (!/^\d+$/.test(input) || !Number.isInteger(days) || days < 1 || days > 3650) {
+        if (!/^\\d+$/.test(input) || !Number.isInteger(days) || days < 1 || days > 3650) {
           return ctx.reply('❌ Send a whole number from 1 to 3650 days, or /cancel.');
         }
         await setAdminSession(ctx.from.id, 'promo_create', 'awaiting_uses', { ...payload, days });
@@ -3417,7 +3417,7 @@ deliveryBot?.command('start', async (ctx) => {
       }
       if (session.step === 'awaiting_uses') {
         const maxUses = input === '-' ? null : Number(input);
-        if (maxUses !== null && (!/^\d+$/.test(input) || !Number.isSafeInteger(maxUses) || maxUses < 1 || maxUses > 1000000)) {
+        if (maxUses !== null && (!/^\\d+$/.test(input) || !Number.isSafeInteger(maxUses) || maxUses < 1 || maxUses > 1000000)) {
           return ctx.reply('❌ Send a number from 1 to 1000000, or - for unlimited uses.');
         }
         await setAdminSession(ctx.from.id, 'promo_create', 'awaiting_expiry', { ...payload, maxUses });
