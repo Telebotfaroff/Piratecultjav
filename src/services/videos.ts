@@ -132,6 +132,27 @@ export async function upsertVideoFromProvider(params: UpsertVideoParams): Promis
   return data as VideoRecord;
 }
 
+export async function listVideosWithoutThumbnail(
+  limit = 20,
+  offset = 0,
+): Promise<{ videos: Pick<VideoRecord, 'id' | 'code' | 'title'>[]; total: number }> {
+  const supabase = getSupabase();
+  const safeLimit = Math.min(Math.max(Number.isFinite(limit) ? Math.floor(limit) : 20, 1), 1000);
+  const safeOffset = Math.max(Number.isFinite(offset) ? Math.floor(offset) : 0, 0);
+  const { data, count, error } = await supabase
+    .from('videos')
+    .select('id, code, title', { count: 'exact' })
+    .or('thumbnail_file_id.is.null,thumbnail_file_id.eq.')
+    .order('code', { ascending: true })
+    .range(safeOffset, safeOffset + safeLimit - 1);
+
+  if (error) throw new Error('Database error listing videos without thumbnails: ' + error.message);
+  return {
+    videos: (data || []) as Pick<VideoRecord, 'id' | 'code' | 'title'>[],
+    total: count || 0,
+  };
+}
+
 export async function getRecentVideos(limit = 20): Promise<VideoRecord[]> {
   const supabase = getSupabase();
   const { data, error } = await supabase.from('videos').select('*').order('created_at', { ascending: false }).limit(limit);
