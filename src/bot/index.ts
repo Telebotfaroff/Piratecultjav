@@ -29,6 +29,10 @@ let isPollingActive = false;
 let isDeliveryBotActive = false;
 let isDeliveryBotConfigured = false;
 let isWebhookActive = false;
+let deliveryRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+let deliveryRecoveryDelayMs = 15_000;
+let deliveryStartInProgress = false;
+let configuredDeliveryToken = '';
 let activeTransportMode: 'webhook' | 'polling' | 'offline' = 'offline';
 let webhookApp: Express | null = null;
 let webhookRouteRegistered = false;
@@ -3378,6 +3382,66 @@ export function getDeliveryBot(): Telegraf | null {
 
 async function startRuntimeHealthMonitor(): Promise<void> {} // Disabled complex health check for dual bots. Can be improved later.
 
+function scheduleDeliveryBotRecovery(): void {
+  if (deliveryRecoveryTimer || !configuredDeliveryToken || isWebhookActive) return;
+  const delay = deliveryRecoveryDelayMs;
+  deliveryRecoveryDelayMs = Math.min(deliveryRecoveryDelayMs * 2, 5 * 60_000);
+  console.warn(`[TelegramBot] Delivery bot recovery scheduled in ${Math.round(delay / 1000)} seconds.`);
+  deliveryRecoveryTimer = setTimeout(() => {
+    deliveryRecoveryTimer = null;
+    void startDeliveryBotWithRecovery();
+  }, delay);
+  deliveryRecoveryTimer.unref?.();
+}
+
+async function startDeliveryBotWithRecovery(): Promise<boolean> {
+  if (isDeliveryBotActive) return true;
+  if (deliveryStartInProgress || !configuredDeliveryToken || isWebhookActive) return false;
+  deliveryStartInProgress = true;
+
+  try {
+    let bot = deliveryBotInstance;
+    if (!bot) {
+      bot = new Telegraf(configuredDeliveryToken);
+      deliveryBotInstance = bot;
+    }
+
+    // Revalidate the saved token on every attempt and clear any stale webhook
+    // before entering long polling.
+    await bot.telegram.getMe();
+    await bot.telegram.deleteWebhook({ drop_pending_updates: false });
+    await bot.launch({ dropPendingUpdates: false });
+
+    isDeliveryBotActive = true;
+    deliveryRecoveryDelayMs = 15_000;
+    if (deliveryRecoveryTimer) {
+      clearTimeout(deliveryRecoveryTimer);
+      deliveryRecoveryTimer = null;
+    }
+    console.log('[TelegramBot] Delivery bot long polling started and verified.');
+    return true;
+  } catch (err) {
+    console.error('[TelegramBot] Delivery bot startup failed; controller remains online:', err);
+    const failedBot = deliveryBotInstance;
+    let middleware: ReturnType<Telegraf['middleware']> | null = null;
+    if (failedBot) {
+      try { middleware = failedBot.middleware(); } catch {}
+      try { failedBot.stop('Delivery bot startup failed; preparing retry'); } catch {}
+    }
+
+    // Recreate the Telegraf client but retain all handlers/middleware registered
+    // by setupBots(), so recovery does not register duplicate controller handlers.
+    const replacement = new Telegraf(configuredDeliveryToken);
+    if (middleware) replacement.use(middleware);
+    deliveryBotInstance = replacement;
+    isDeliveryBotActive = false;
+    scheduleDeliveryBotRecovery();
+    return false;
+  } finally {
+    deliveryStartInProgress = false;
+  }
+}
+
 export async function startBotWebhook(app: Express): Promise<boolean> {
   if (!config.webhookUrl || !config.webhookSecret) {
     console.error('[TelegramBot] Webhook mode requires both WEBHOOK_URL and WEBHOOK_SECRET.');
@@ -3398,6 +3462,7 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
   try {
     controllerBotInstance = new Telegraf(controllerToken);
     const deliveryToken = await getSetting<string>('delivery_bot_token', '');
+    configuredDeliveryToken = deliveryToken;
     isDeliveryBotConfigured = Boolean(deliveryToken);
     deliveryBotInstance = deliveryToken ? new Telegraf(deliveryToken) : null;
     if (!deliveryBotInstance) {
@@ -3412,10 +3477,12 @@ export async function startBotWebhook(app: Express): Promise<boolean> {
       drop_pending_updates: false,
     });
     if (deliveryBotInstance) {
+      await deliveryBotInstance.telegram.getMe();
       await deliveryBotInstance.telegram.setWebhook(webhookUrl, {
         secret_token: config.webhookSecret,
         drop_pending_updates: false,
       });
+      isDeliveryBotActive = true;
     }
 
     if (!webhookRouteRegistered) {
@@ -3446,7 +3513,11 @@ export async function startBotPolling(): Promise<boolean> {
   let deliveryToken = '';
   try { deliveryToken = await getSetting<string>('delivery_bot_token', ''); }
   catch (error) { console.warn('[TelegramBot] Delivery config unavailable; starting controller only:', error); }
+  configuredDeliveryToken = deliveryToken;
   isDeliveryBotConfigured = Boolean(deliveryToken);
+  isDeliveryBotActive = false;
+  if (deliveryRecoveryTimer) { clearTimeout(deliveryRecoveryTimer); deliveryRecoveryTimer = null; }
+  deliveryRecoveryDelayMs = 15_000;
   const preferredRole = getStoredActiveBotRole();
   const roles: Array<'primary' | 'backup'> = [
     preferredRole,
@@ -3483,17 +3554,7 @@ export async function startBotPolling(): Promise<boolean> {
       console.log(`[TelegramBot] Controller long polling started | role=${role} | fallback=${runtimeFailoverAttempted}.`);
 
       if (deliveryBotInstance) {
-        try {
-          await deliveryBotInstance.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
-          await deliveryBotInstance.launch({ dropPendingUpdates: false });
-          isDeliveryBotActive = true;
-          console.log('[TelegramBot] Delivery bot long polling started.');
-        } catch (deliveryError) {
-          console.error('[TelegramBot] Delivery bot failed to start; controller remains online:', deliveryError);
-          try { deliveryBotInstance.stop('Delivery bot startup failed'); } catch {}
-          deliveryBotInstance = null;
-          isDeliveryBotActive = false;
-        }
+        await startDeliveryBotWithRecovery();
       }
       return true;
     } catch (err) {
@@ -3542,6 +3603,9 @@ export async function switchBotRole(role: 'primary' | 'backup'): Promise<boolean
 }
 
 export function stopBotPolling(): void {
+  if (deliveryRecoveryTimer) { clearTimeout(deliveryRecoveryTimer); deliveryRecoveryTimer = null; }
+  deliveryRecoveryDelayMs = 15_000;
+  deliveryStartInProgress = false;
   // Telegraf may have launched one instance before another instance failed.
   // Stop every constructed instance regardless of the aggregate active flag.
   if (controllerBotInstance) {
@@ -3552,6 +3616,7 @@ export function stopBotPolling(): void {
   }
   isPollingActive = false;
   isDeliveryBotActive = false;
+  configuredDeliveryToken = '';
   isWebhookActive = false;
   activeTransportMode = 'offline';
   controllerBotInstance = null;
