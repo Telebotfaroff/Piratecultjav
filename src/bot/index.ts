@@ -2907,9 +2907,12 @@ deliveryBot?.command('start', async (ctx) => {
         const photo = sent.photo?.[sent.photo.length - 1];
         if (!photo?.file_id) throw new Error('Telegram did not return a thumbnail file_id.');
         await updateVideoThumbnailByCode(code, photo.file_id, sent.message_id);
+        await removeMissedCode(code).catch((removeErr) => {
+          console.warn(`[MissedCodes] Could not clear ${code} after thumbnail registration:`, removeErr);
+        });
         await clearAdminSession(ctx.from.id);
         return ctx.reply(
-          `✅ Thumbnail saved for <code>${escapeHtml(code)}</code>.\n🖼️ Stored in the dump channel and linked to the existing video record.`,
+          `✅ Thumbnail saved for <code>${escapeHtml(code)}</code>.\n🎬 The existing dump-channel video is now published and searchable in the catalog.`,
           { parse_mode: 'HTML' },
         );
       } catch (err) {
