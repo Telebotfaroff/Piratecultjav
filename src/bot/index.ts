@@ -3,7 +3,7 @@ import type { Express } from 'express';
 import { Telegraf, Markup } from 'telegraf';
 import { config, isAdmin } from '../config.ts';
 import { normalizeCode, extractCodes, extractVideoIdFromStartPayload, cleanActressList, cleanTitle } from '../services/code.ts';
-import { searchVideos, getVideoById, getVideoByCode, upsertVideoFromProvider, countVideos, updateVideoMetadata, updateVideoThumbnailByCode, deleteVideo, updateVideoStatus } from '../services/videos.ts';
+import { searchVideos, getVideoById, getVideoByCode, upsertVideoFromProvider, countVideos, listVideosWithoutThumbnail, updateVideoMetadata, updateVideoThumbnailByCode, deleteVideo, updateVideoStatus } from '../services/videos.ts';
 import { createIndexJob, countJobs, getRecentJobs, retryJob } from '../services/indexJobs.ts';
 import { upsertUser, isUserBlocked, setUserBlocked, countUsers, getBroadcastRecipientPage, getUser, getUserDashboard, getReferralLeaderboard, redeemPromoCode, createPromoCode, listPremiumPayments, listPromoCodes, setPromoCodeActive, consumeVideoDownload, refundVideoDownload, getDownloadQuotaSettings, setDownloadQuotaSettings, registerReferral, completeReferral, setUserPlan } from '../services/users.ts';
 import { checkUserForceSub, getAllForceSubChannels, upsertForceSubChannel, updateForceSubChannel, deleteForceSubChannel, createForceSubInviteLink } from '../services/forceSub.ts';
@@ -665,6 +665,98 @@ deliveryBot?.command('start', async (ctx) => {
     return ctx.reply('📝 *Admin Post:* Please enter the JAV code to post (e.g. `ADN-001`):', {
       parse_mode: 'Markdown',
     });
+  });
+
+  async function showMissingThumbnails(ctx: any, requestedPage = 1, edit = false) {
+    try {
+      const pageSize = 20;
+      const first = await listVideosWithoutThumbnail(pageSize, (requestedPage - 1) * pageSize);
+      const pageCount = Math.max(1, Math.ceil(first.total / pageSize));
+      const page = Math.min(Math.max(1, requestedPage), pageCount);
+      const result = page === requestedPage ? first : await listVideosWithoutThumbnail(pageSize, (page - 1) * pageSize);
+      const lines = [
+        '🖼️ <b>Videos With No Screenshot</b>',
+        '📊 Missing: <b>' + result.total + '</b> · Page <b>' + page + '/' + pageCount + '</b>',
+        '',
+        ...(result.videos.length
+          ? result.videos.map((video, index) =>
+              ((page - 1) * pageSize + index + 1) + '. <code>' + escapeHtml(video.code) + '</code> — ' + escapeHtml(video.title || 'Untitled')
+            )
+          : ['✅ Every catalog video has a screenshot.']),
+      ];
+      const rows: any[] = [];
+      const nav: any[] = [];
+      if (page > 1) nav.push(Markup.button.callback('⬅️ Previous', 'missingthumbs:page:' + (page - 1)));
+      if (page < pageCount) nav.push(Markup.button.callback('Next ➡️', 'missingthumbs:page:' + (page + 1)));
+      if (nav.length) rows.push(nav);
+      rows.push([
+        Markup.button.callback('🔄 Refresh', 'missingthumbs:page:' + page),
+        Markup.button.callback('📄 Export TXT', 'missingthumbs:export'),
+      ]);
+      rows.push([Markup.button.callback('⬅️ Admin Center', 'settings:main')]);
+      const options = { parse_mode: 'HTML' as const, ...Markup.inlineKeyboard(rows) };
+      const message = lines.join('\\n');
+      if (edit && ctx.callbackQuery) {
+        try { return await ctx.editMessageText(message, options); }
+        catch (err) {
+          if (err instanceof Error && /message is not modified/i.test(err.message)) return;
+          return ctx.reply(message, options);
+        }
+      }
+      return ctx.reply(message, options);
+    } catch (err) {
+      console.error('[MissingThumbnails] Failed to list:', err);
+      return ctx.reply('❌ Could not load videos without screenshots.');
+    }
+  }
+
+  controllerBot.action('admin:missingthumbnails', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await ctx.answerCbQuery('Loading missing screenshots…');
+    return showMissingThumbnails(ctx, 1, true);
+  });
+
+  controllerBot.command('missingthumbnails', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.reply('Unauthorized: Admin access required.');
+    const requestedPage = Number(ctx.message.text.trim().split(/\\s+/)[1] || '1');
+    return showMissingThumbnails(ctx, Number.isInteger(requestedPage) ? Math.max(1, requestedPage) : 1);
+  });
+
+  controllerBot.action(/^missingthumbs:page:(\\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await ctx.answerCbQuery();
+    return showMissingThumbnails(ctx, Math.max(1, Number(ctx.match[1]) || 1), true);
+  });
+
+  controllerBot.action('missingthumbs:export', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await ctx.answerCbQuery('Preparing export…');
+    try {
+      const all: Array<{ code: string; title: string }> = [];
+      let offset = 0;
+      let total = 0;
+      do {
+        const batch = await listVideosWithoutThumbnail(500, offset);
+        total = batch.total;
+        all.push(...batch.videos.map((video) => ({ code: video.code, title: video.title || 'Untitled' })));
+        offset += batch.videos.length;
+        if (!batch.videos.length) break;
+      } while (offset < total);
+      if (!all.length) return ctx.reply('✅ No videos are missing screenshots.');
+      const content = [
+        'VIDEOS WITH NO SCREENSHOT',
+        'Total: ' + all.length,
+        '',
+        ...all.map((video) => video.code + ' — ' + video.title),
+      ].join('\\n');
+      return ctx.replyWithDocument(
+        { source: Buffer.from(content, 'utf8'), filename: 'videos-without-screenshots.txt' },
+        { caption: '🖼️ Export complete: ' + all.length + ' videos have no screenshot.' },
+      );
+    } catch (err) {
+      console.error('[MissingThumbnails] Export failed:', err);
+      return ctx.reply('❌ Could not export the missing screenshot list.');
+    }
   });
 
   controllerBot.action('admin:missedcodes', async (ctx) => {
