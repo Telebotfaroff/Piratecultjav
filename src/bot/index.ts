@@ -511,6 +511,7 @@ deliveryBot?.command('start', async (ctx) => {
       if (page < pageCount) nav.push(Markup.button.callback('Next ➡️', 'missedcodes:page:' + (page + 1)));
       if (nav.length) rows.push(nav);
       rows.push([Markup.button.callback('🔄 Refresh', 'missedcodes:page:' + page)]);
+      rows.push([Markup.button.callback('🖼️ Missing Thumbnail Channel', 'missingchannel:manage')]);
       const text = lines.join('\n');
       if (edit && ctx.callbackQuery) {
         try { return await ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) }); }
@@ -524,6 +525,131 @@ deliveryBot?.command('start', async (ctx) => {
       return ctx.reply('❌ Could not load missed codes. Make sure Supabase migration 004_missed_metadata_codes.sql has been applied.');
     }
   }
+
+
+  async function renderMissingCodeChannel(ctx: any, edit = true) {
+    const channelId = await getSetting<string>('missing_code_channel', '');
+    const text =
+      '🖼️ <b>MISSING THUMBNAIL CHANNEL</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
+      'Status: <b>' + (channelId ? '🟢 Configured' : '⚪ Not configured') + '</b>\n' +
+      'Channel: <code>' + escapeHtml(channelId || '—') + '</code>\n\n' +
+      'Post exactly one photo per message. The caption must contain only one exact video code, for example <code>IPZZ-979</code>.\n' +
+      'The indexer copies the photo into the dump channel, links it to the existing video record, and clears the matching missing-code entry.\n\n' +
+      'The controller bot must be an administrator in this channel.';
+    const rows: any[] = [
+      [Markup.button.callback(channelId ? '🔁 Replace Channel' : '➕ Set Channel', 'missingchannel:set')],
+    ];
+    if (channelId) {
+      rows.push([Markup.button.callback('🧪 Test Channel Access', 'missingchannel:test')]);
+      rows.push([Markup.button.callback('🔕 Disable Channel', 'missingchannel:disable:confirm')]);
+    }
+    rows.push([Markup.button.callback('🔄 Refresh', 'missingchannel:refresh')]);
+    rows.push([Markup.button.callback('⬅️ Missing Codes', 'admin:missedcodes')]);
+    const options = { parse_mode: 'HTML' as const, ...Markup.inlineKeyboard(rows) };
+    if (edit && ctx.callbackQuery) {
+      return ctx.editMessageText(text, options).catch(() => ctx.reply(text, options));
+    }
+    return ctx.reply(text, options);
+  }
+
+  async function saveMissingCodeChannel(ctx: any, channelId: string) {
+    const me = await ctx.telegram.getMe();
+    const chat = await ctx.telegram.getChat(channelId);
+    if (!('title' in chat)) {
+      throw new Error('That chat is not a Telegram channel.');
+    }
+    const member = await ctx.telegram.getChatMember(channelId, me.id);
+    if (!['administrator', 'creator'].includes(member.status)) {
+      throw new Error('The controller bot must be an administrator in the channel to receive channel posts.');
+    }
+    await setSetting('missing_code_channel', String(chat.id));
+    await clearAdminSession(ctx.from.id);
+    return ctx.reply(
+      '✅ <b>Missing Code Channel saved</b>\n\n📡 Channel: <b>' + escapeHtml(chat.title) + '</b>\n🆔 <code>' + escapeHtml(chat.id) + '</code>\n\nNow post one photo per message with only its exact code as the caption.',
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard([
+        [Markup.button.callback('🧪 Test Channel Access', 'missingchannel:test')],
+        [Markup.button.callback('⬅️ Missing Channel Settings', 'missingchannel:manage')],
+      ]) },
+    );
+  }
+
+  controllerBot.action('missingchannel:manage', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await ctx.answerCbQuery();
+    return renderMissingCodeChannel(ctx, true);
+  });
+
+  controllerBot.action('missingchannel:refresh', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await ctx.answerCbQuery('Refreshing…');
+    return renderMissingCodeChannel(ctx, true);
+  });
+
+  controllerBot.action('missingchannel:set', async (ctx) => {
+    if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await setAdminSession(ctx.from.id, 'missing_code_channel', 'awaiting_channel');
+    await ctx.answerCbQuery();
+    return ctx.reply(
+      '➕ <b>Set Missing Code Channel</b>\n\nSend the numeric channel ID (for example <code>-1001234567890</code>), or forward a post from that channel.\n\nAdd the controller bot as an administrator first. Send /cancel to stop.',
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'missingchannel:cancel')]]) },
+    );
+  });
+
+  controllerBot.action('missingchannel:cancel', async (ctx) => {
+    if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await clearAdminSession(ctx.from.id);
+    await ctx.answerCbQuery('Cancelled.');
+    return renderMissingCodeChannel(ctx, false);
+  });
+
+  controllerBot.action('missingchannel:disable:confirm', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await ctx.answerCbQuery();
+    return ctx.editMessageText(
+      '⚠️ <b>Disable Missing Code Channel?</b>\n\nNew photos in the configured channel will no longer be processed automatically. Existing catalog records and thumbnails will remain unchanged.',
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard([
+        [Markup.button.callback('🔕 Yes, disable', 'missingchannel:disable')],
+        [Markup.button.callback('↩️ Cancel', 'missingchannel:manage')],
+      ]) },
+    );
+  });
+
+  controllerBot.action('missingchannel:disable', async (ctx) => {
+    if (!ctx.from || !isAdmin(ctx.from.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    await setSetting('missing_code_channel', '');
+    await clearAdminSession(ctx.from.id);
+    await ctx.answerCbQuery('Missing Code Channel disabled.');
+    return renderMissingCodeChannel(ctx, true);
+  });
+
+  controllerBot.action('missingchannel:test', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    const channelId = await getSetting<string>('missing_code_channel', '');
+    if (!channelId) return ctx.answerCbQuery('Configure a channel first.', { show_alert: true });
+    await ctx.answerCbQuery('Testing access…');
+    try {
+      const me = await ctx.telegram.getMe();
+      const chat = await ctx.telegram.getChat(channelId);
+      const member = await ctx.telegram.getChatMember(channelId, me.id);
+      const isAdminInChannel = ['administrator', 'creator'].includes(member.status);
+      const title = 'title' in chat ? chat.title : channelId;
+      return ctx.editMessageText(
+        '🧪 <b>Missing Code Channel Test</b>\n\n📡 <b>' + escapeHtml(title) + '</b>\n🆔 <code>' + escapeHtml(channelId) + '</code>\n\n' +
+        (isAdminInChannel ? '✅' : '❌') + ' Bot administrator access: <b>' + (isAdminInChannel ? 'OK' : 'NOT ADMIN') + '</b>\n\n' +
+        (isAdminInChannel ? 'New photo posts can be received by the indexer.' : 'Promote the controller bot to channel administrator, then test again.'),
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔄 Test Again', 'missingchannel:test')],
+          [Markup.button.callback('⬅️ Missing Channel Settings', 'missingchannel:manage')],
+        ]) },
+      );
+    } catch (err) {
+      return ctx.editMessageText(
+        '❌ <b>Channel test failed</b>\n\n' + escapeHtml(err instanceof Error ? err.message : String(err)),
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'missingchannel:manage')]]) },
+      );
+    }
+  });
+
 
   // 5. Admin /post workflow
   controllerBot.command('post', async (ctx) => {
@@ -2794,6 +2920,8 @@ deliveryBot?.command('start', async (ctx) => {
   // Telegram albums arrive as separate channel_post updates. Buffer each media group
   // briefly so every photo can inherit the album's video code if its own caption is
   // missing or formatted in a way the code extractor doesn't recognize.
+  const missingCodePostsInFlight = new Set<string>();
+
   const screenshotAlbums = new Map<string, {
     chatId: string;
     code: string | null;
@@ -2832,6 +2960,70 @@ deliveryBot?.command('start', async (ctx) => {
   controllerBot.on('channel_post', async (ctx) => {
     const post = ctx.channelPost;
     const chatId = String(ctx.chat.id).trim();
+    const configuredMissingCodeChatId = String(await getSetting<string>('missing_code_channel', '')).trim();
+
+    if (configuredMissingCodeChatId && chatId === configuredMissingCodeChatId) {
+      if (!('photo' in post) || !post.photo?.length) {
+        console.warn('[MissingCodeChannel] Ignored post #' + post.message_id + ': only photo posts are supported.');
+        return;
+      }
+
+      const caption = String(('caption' in post ? post.caption : '') || '').trim();
+      const normalizedCode = normalizeCode(caption);
+      const codes = extractCodes(caption);
+      if (!normalizedCode || caption.toUpperCase() !== normalizedCode || codes.length !== 1 || codes[0] !== normalizedCode) {
+        console.warn('[MissingCodeChannel] Ignored post #' + post.message_id + ': caption must contain only one exact video code.');
+        return;
+      }
+
+      const sourceKey = chatId + ':' + post.message_id;
+      const inFlight = missingCodePostsInFlight;
+      if (inFlight.has(sourceKey)) return;
+      inFlight.add(sourceKey);
+      try {
+        const processedValue = await getSetting<string[]>('missing_code_channel_processed_posts', []);
+        const processed = Array.isArray(processedValue) ? processedValue : [];
+        if (processed.includes(sourceKey)) return;
+
+        const video = await getVideoByCode(normalizedCode);
+        if (!video) {
+          throw new Error('No existing catalog record was found for ' + normalizedCode + '. The post was not indexed.');
+        }
+        if (!video.dump_chat_id || !Number.isSafeInteger(Number(video.video_message_id)) || Number(video.video_message_id) <= 0) {
+          throw new Error('The catalog record has no valid original dump-channel video message. The thumbnail was not linked.');
+        }
+
+        if (video.thumbnail_file_id) {
+          await setSetting('missing_code_channel_processed_posts', [...processed, sourceKey].slice(-5000));
+          console.log('[MissingCodeChannel] Skipped ' + normalizedCode + ': a thumbnail is already attached.');
+          return;
+        }
+
+        const sourcePhoto = post.photo[post.photo.length - 1];
+        const stored = await controllerBot.telegram.sendPhoto(config.dumpChatId, sourcePhoto.file_id, {
+          caption: '[THUMBNAIL] ' + normalizedCode,
+        });
+        const storedPhoto = stored.photo?.[stored.photo.length - 1];
+        if (!storedPhoto?.file_id) {
+          throw new Error('Telegram did not return the stored thumbnail file_id.');
+        }
+
+        await updateVideoThumbnailByCode(normalizedCode, storedPhoto.file_id, stored.message_id);
+        try {
+          await removeMissedCode(normalizedCode);
+        } catch (removeErr) {
+          console.warn('[MissingCodeChannel] Thumbnail linked, but missed-code cleanup failed for ' + normalizedCode + ':', removeErr);
+        }
+        await setSetting('missing_code_channel_processed_posts', [...processed, sourceKey].slice(-5000));
+        console.log('[MissingCodeChannel] Indexed thumbnail for ' + normalizedCode + ' from post #' + post.message_id + '.');
+      } catch (err) {
+        console.error('[MissingCodeChannel] Failed post #' + post.message_id + ':', err instanceof Error ? err.message : String(err));
+      } finally {
+        inFlight.delete(sourceKey);
+      }
+      return;
+    }
+
     const configuredScreenshotChatId = String(config.screenshotChatId || '').trim();
 
     if (configuredScreenshotChatId && chatId === configuredScreenshotChatId) {
@@ -3020,6 +3212,27 @@ deliveryBot?.command('start', async (ctx) => {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[MissedCodes] Thumbnail update failed for ${code}:`, message);
         return ctx.reply(`❌ Could not save thumbnail: ${escapeHtml(message)}\nYou can retry by tapping Thumbnail again, or /cancel.`, { parse_mode: 'HTML' });
+      }
+    }
+
+    if (session.action === 'missing_code_channel' && session.step === 'awaiting_channel') {
+      if ('text' in ctx.message && /^\/cancel(?:@\w+)?$/i.test(ctx.message.text.trim())) {
+        await clearAdminSession(ctx.from.id);
+        return ctx.reply('Missing Code Channel setup cancelled.');
+      }
+      let channelId = '';
+      if ('text' in ctx.message && /^-?\d+$/.test(ctx.message.text.trim())) {
+        channelId = ctx.message.text.trim();
+      } else if ('forward_origin' in ctx.message && ctx.message.forward_origin?.type === 'channel') {
+        channelId = String(ctx.message.forward_origin.chat.id);
+      }
+      if (!channelId) {
+        return ctx.reply('❌ Send a numeric channel ID or forward a post from the channel. Send /cancel to stop.', { parse_mode: 'HTML' });
+      }
+      try {
+        return await saveMissingCodeChannel(ctx, channelId);
+      } catch (err) {
+        return ctx.reply('❌ Could not save channel: ' + escapeHtml(err instanceof Error ? err.message : String(err)) + '\n\nCheck the channel ID and make sure the controller bot is an administrator. Try again or /cancel.', { parse_mode: 'HTML' });
       }
     }
 
