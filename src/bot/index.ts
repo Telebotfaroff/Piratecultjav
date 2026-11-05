@@ -555,8 +555,12 @@ deliveryBot?.command('start', async (ctx) => {
   async function saveMissingCodeChannel(ctx: any, channelId: string) {
     const me = await ctx.telegram.getMe();
     const chat = await ctx.telegram.getChat(channelId);
-    if (!('title' in chat)) {
+    if (chat.type !== 'channel') {
       throw new Error('That chat is not a Telegram channel.');
+    }
+    if (String(chat.id) === String(config.dumpChatId) ||
+        (config.screenshotChatId && String(chat.id) === String(config.screenshotChatId))) {
+      throw new Error('Use a separate channel, not the dump channel or screenshot channel.');
     }
     const member = await ctx.telegram.getChatMember(channelId, me.id);
     if (!['administrator', 'creator'].includes(member.status)) {
