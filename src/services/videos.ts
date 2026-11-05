@@ -147,6 +147,28 @@ export async function countVideos(): Promise<number> {
 }
 
 
+export async function updateVideoThumbnailByCode(
+  code: string,
+  thumbnailFileId: string,
+  thumbnailMessageId: number,
+): Promise<void> {
+  const supabase = getSupabase();
+  const normalized = normalizeCode(code) || code.trim().toUpperCase();
+  const { data, error } = await supabase
+    .from('videos')
+    .update({
+      thumbnail_file_id: thumbnailFileId,
+      thumbnail_message_id: thumbnailMessageId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('normalized_code', normalized)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error('Database error updating video thumbnail: ' + error.message);
+  if (!data) throw new Error(`No video catalog record exists for ${code}. The thumbnail was not linked.`);
+}
+
 export async function updateVideoMetadata(
   id: string,
   updates: {
