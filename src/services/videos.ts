@@ -159,6 +159,10 @@ export async function updateVideoThumbnailByCode(
     .update({
       thumbnail_file_id: thumbnailFileId,
       thumbnail_message_id: thumbnailMessageId,
+      // A missing-metadata job leaves a placeholder row with status='failed'.
+      // Once an admin supplies its thumbnail, the indexed dump message is usable
+      // and must become searchable in the public catalog.
+      status: 'available',
       updated_at: new Date().toISOString(),
     })
     .eq('normalized_code', normalized)
