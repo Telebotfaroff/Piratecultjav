@@ -2989,7 +2989,13 @@ deliveryBot?.command('start', async (ctx) => {
         const processed = Array.isArray(processedValue) ? processedValue : [];
         if (processed.includes(sourceKey)) return;
 
-        const video = await getVideoByCode(normalizedCode);
+        let video = await getVideoByCode(normalizedCode);
+        // The missed-code row can become visible just before the indexer persists its failed video placeholder.
+        // Retry briefly so an admin can post a thumbnail as soon as the code appears in the Missing list.
+        for (let attempt = 1; !video && attempt <= 4; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          video = await getVideoByCode(normalizedCode);
+        }
         if (!video) {
           throw new Error('No existing catalog record was found for ' + normalizedCode + '. The post was not indexed.');
         }
