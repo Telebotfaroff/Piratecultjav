@@ -1534,7 +1534,7 @@ deliveryBot?.command('start', async (ctx) => {
     await ctx.answerCbQuery('Restarting delivery bot…');
     const token = await getSetting<string>('delivery_bot_token', '');
     if (!token) return showDeliveryBotSettings(ctx, false);
-    await ctx.reply('🔄 Restarting delivery bot. The controller bot will remain available.');
+    await ctx.reply('🔄 Restarting the bot runtime with the saved delivery bot configuration.');
     setTimeout(() => {
       const mode = getBotRuntimeStatus().mode;
       if (mode === 'webhook' && webhookApp) void startBotWebhook(webhookApp);
