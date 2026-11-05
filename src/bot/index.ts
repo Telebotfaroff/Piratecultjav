@@ -2978,8 +2978,8 @@ deliveryBot?.command('start', async (ctx) => {
 
       const sourceKey = chatId + ':' + post.message_id;
       const inFlight = missingCodePostsInFlight;
-      if (inFlight.has(sourceKey)) return;
-      inFlight.add(sourceKey);
+      if (inFlight.has(normalizedCode)) return;
+      inFlight.add(normalizedCode);
       try {
         const processedValue = await getSetting<string[]>('missing_code_channel_processed_posts', []);
         const processed = Array.isArray(processedValue) ? processedValue : [];
@@ -2994,6 +2994,9 @@ deliveryBot?.command('start', async (ctx) => {
         }
 
         if (video.thumbnail_file_id) {
+          await removeMissedCode(normalizedCode).catch((removeErr) => {
+            console.warn('[MissingCodeChannel] Existing thumbnail found, but missed-code cleanup failed for ' + normalizedCode + ':', removeErr);
+          });
           await setSetting('missing_code_channel_processed_posts', [...processed, sourceKey].slice(-5000));
           console.log('[MissingCodeChannel] Skipped ' + normalizedCode + ': a thumbnail is already attached.');
           return;
@@ -3019,7 +3022,7 @@ deliveryBot?.command('start', async (ctx) => {
       } catch (err) {
         console.error('[MissingCodeChannel] Failed post #' + post.message_id + ':', err instanceof Error ? err.message : String(err));
       } finally {
-        inFlight.delete(sourceKey);
+        inFlight.delete(normalizedCode);
       }
       return;
     }
