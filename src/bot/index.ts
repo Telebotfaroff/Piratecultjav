@@ -3619,12 +3619,33 @@ deliveryBot?.command('start', async (ctx) => {
       await ctx.reply('⏳ Uploading / Copying video to Telegram Dump Channel...');
 
       try {
-        // Forward video to dump channel
-        const forwarded = await ctx.telegram.copyMessage(config.dumpChatId, ctx.chat.id, msg.message_id, {
-          caption: `${code} - ${metadata.title}`,
-        });
-
-        const dumpVideoMessageId = forwarded.message_id;
+        // Prefer Telegram's native server-side copy so the original media object,
+        // cover artwork, duration, dimensions and streaming metadata remain intact.
+        const videoCaption = `${code} - ${metadata.title}`;
+        let dumpVideoMessageId: number;
+        try {
+          const copied = await ctx.telegram.copyMessage(config.dumpChatId, ctx.chat.id, msg.message_id, {
+            caption: videoCaption,
+          });
+          dumpVideoMessageId = copied.message_id;
+        } catch (copyError) {
+          // sendVideo fallback is possible only for a video received in this update:
+          // Bot API file_ids are bot-scoped, so never reuse a file_id saved by another bot.
+          if (!('video' in msg) || !msg.video?.file_id) throw copyError;
+          const sourceVideo = msg.video as any;
+          const fallbackOptions: any = {
+            caption: videoCaption,
+            duration: sourceVideo.duration,
+            width: sourceVideo.width,
+            height: sourceVideo.height,
+            supports_streaming: true,
+          };
+          // Newer Bot API video objects may expose a cover file. Keep it when present.
+          if (sourceVideo.cover?.file_id) fallbackOptions.cover = sourceVideo.cover.file_id;
+          const sent = await ctx.telegram.sendVideo(config.dumpChatId, sourceVideo.file_id, fallbackOptions);
+          dumpVideoMessageId = sent.message_id;
+          console.warn('[VideoIngest] copyMessage failed; sendVideo streaming fallback used:', copyError instanceof Error ? copyError.message : String(copyError));
+        }
 
         // Optionally send thumbnail to dump channel
         let thumbRef = null;
