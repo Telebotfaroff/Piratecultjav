@@ -289,7 +289,7 @@ deliveryBot?.command('start', async (ctx) => {
           ]);
           rows.push([Markup.button.callback('✅ Check Membership', 'check_sub')]);
           return ctx.reply(
-            '🔒 <b>Join the required channel(s) first</b>\\n\\nSubscribe to every required channel, then tap Check Membership.',
+            '🔒 <b>Join the required channel(s) first</b>\n\nSubscribe to every required channel, then tap Check Membership.',
             { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) },
           );
         }
