@@ -275,6 +275,30 @@ deliveryBot?.command('start', async (ctx) => {
       return deliverVideoToUser(deliveryBot!, ctx, videoId ?? payload, videoId ? 'deep_link' : 'unknown');
     }
 
+    // Enforce required-channel membership on a plain /start as well as on video delivery.
+    // Deep-link starts are checked again inside deliverVideoToUser before quota or delivery.
+    if (ctx.from) {
+      try {
+        const forceSub = await checkUserForceSub(deliveryBot!, ctx.from.id);
+        if (!forceSub.passed) {
+          const rows: any[] = forceSub.missingChannels.map(ch => [
+            Markup.button.url(
+              ch.request_mode ? '📨 Request to Join ' + ch.title : 'Join ' + ch.title,
+              ch.invite_link || 'https://t.me/' + ch.channel_id.replace('@', ''),
+            ),
+          ]);
+          rows.push([Markup.button.callback('✅ Check Membership', 'check_sub')]);
+          return ctx.reply(
+            '🔒 <b>Join the required channel(s) first</b>\\n\\nSubscribe to every required channel, then tap Check Membership.',
+            { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) },
+          );
+        }
+      } catch (err) {
+        console.error('[ForceSub] /start membership check failed:', err);
+        return ctx.reply('⚠️ Membership verification is temporarily unavailable. Please try /start again shortly.');
+      }
+    }
+
     const welcome = [
       '✦ <b>PIRATECULTJAV</b> ✦',
       '',
@@ -2314,7 +2338,7 @@ deliveryBot?.command('start', async (ctx) => {
       '⏳ <b>Download All started</b>\n\n🔎 Search: <code>' + escapeHtml(query) + '</code>\nYour matching videos will be sent one by one. Keep this chat open.',
       { parse_mode: 'HTML' },
     );
-    return downloadAllSearchResults(controllerBot, ctx, query);
+    return downloadAllSearchResults(deliveryBot!, ctx, query);
   });
 
   deliveryBot?.action('downloadall:cancel', async (ctx) => {
@@ -2329,7 +2353,7 @@ deliveryBot?.command('start', async (ctx) => {
   deliveryBot?.action(/^download:(.+)$/, async (ctx) => {
     const identifier = ctx.match[1];
     await ctx.answerCbQuery('Fetching video...');
-    return deliverVideoToUser(controllerBot, ctx, identifier);
+    return deliverVideoToUser(deliveryBot!, ctx, identifier);
   });
 
   controllerBot.action('premium:store', async (ctx) => {
@@ -2516,7 +2540,7 @@ deliveryBot?.command('start', async (ctx) => {
     await ctx.answerCbQuery('Checking membership...');
     if (!ctx.from) return;
 
-    const forceSub = await checkUserForceSub(controllerBot, ctx.from.id);
+    const forceSub = await checkUserForceSub(deliveryBot!, ctx.from.id);
     if (forceSub.passed) {
       return ctx.reply('✅ Membership verified. You can now search for videos.');
     }
@@ -3084,7 +3108,7 @@ deliveryBot?.command('start', async (ctx) => {
   deliveryBot?.on('text', async (ctx) => {
     // Check force-sub for normal users
     if (ctx.from) {
-      const forceSub = await checkUserForceSub(controllerBot, ctx.from.id);
+      const forceSub = await checkUserForceSub(deliveryBot!, ctx.from.id);
       if (!forceSub.passed) {
         const buttons: any[] = forceSub.missingChannels.map(ch =>
           Markup.button.url(`Join ${ch.title}`, ch.invite_link || `https://t.me/${ch.channel_id.replace('@', '')}`)
