@@ -425,7 +425,7 @@ async function handleSearchQuery(ctx: any, rawQuery: string, page = 0) {
     // Previously the generic text handler checked membership, but callback searches
     // could call this function directly and bypass the gate.
     if (ctx.from) {
-      const forceSub = await checkUserForceSub(ctx.bot, ctx.from.id);
+      const forceSub = await checkUserForceSub({ telegram: ctx.telegram }, ctx.from.id);
       if (!forceSub.passed) {
         const rows: any[] = forceSub.missingChannels.map(ch => [
           Markup.button.url(
