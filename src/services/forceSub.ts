@@ -39,7 +39,7 @@ export async function isForceSubGloballyEnabled(): Promise<boolean> {
 }
 
 export async function checkUserForceSub(
-  bot: Telegraf,
+  bot: Pick<Telegraf, 'telegram'>,
   userId: number
 ): Promise<ForceSubCheckResult> {
   // Admins bypass force-sub check automatically
