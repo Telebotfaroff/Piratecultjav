@@ -688,12 +688,12 @@ async function showForceSubAdminMenu(ctx: any) {
   ];
   for (const ch of channels) {
     rows.push([
-      Markup.button.callback((ch.is_active ? '🔴 Disable ' : '🟢 Enable ') + ch.title.slice(0, 14), 'settings:forcesub:toggle-channel:' + ch.id),
-      Markup.button.callback(ch.request_mode ? '📨 Request: ON' : '📨 Request: OFF', 'settings:forcesub:request:' + ch.id),
+      Markup.button.callback((ch.is_active ? '🔴 Disable ' : '🟢 Enable ') + ch.title.slice(0, 14), 'fs:tc:' + ch.id),
+      Markup.button.callback(ch.request_mode ? '📨 Request: ON' : '📨 Request: OFF', 'fs:rq:' + ch.id),
     ]);
     rows.push([
-      Markup.button.callback('🧪 Test ' + ch.title.slice(0, 18), 'settings:forcesub:test:' + ch.id),
-      Markup.button.callback('🗑️ Delete', 'settings:forcesub:confirm-delete:' + ch.id),
+      Markup.button.callback('🧪 Test ' + ch.title.slice(0, 18), 'fs:ts:' + ch.id),
+      Markup.button.callback('🗑️ Delete', 'fs:cd:' + ch.id),
     ]);
   }
   rows.push([Markup.button.callback('🔄 Refresh', 'settings:forcesub')]);
