@@ -2522,7 +2522,7 @@ deliveryBot?.command('start', async (ctx) => {
     return showForceSubAdminMenu(ctx);
   });
 
-  controllerBot.action(/^settings:forcesub:test:(.+)$/, async (ctx) => {
+  controllerBot.action(/^(?:settings:forcesub:test:|fs:ts:)(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const channels = await getAllForceSubChannels();
     const channel = channels.find(ch => ch.id === ctx.match[1]);
@@ -2558,7 +2558,7 @@ deliveryBot?.command('start', async (ctx) => {
       return ctx.editMessageText(result, {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
-          [Markup.button.callback('🔄 Test Again', 'settings:forcesub:test:' + channel.id)],
+          [Markup.button.callback('🔄 Test Again', 'fs:ts:' + channel.id)],
           [Markup.button.callback('⬅️ Force-sub Settings', 'settings:forcesub')],
         ]),
       });
@@ -2578,7 +2578,7 @@ deliveryBot?.command('start', async (ctx) => {
       ].join('\n');
       return ctx.editMessageText(message, {
         parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Test Again', 'settings:forcesub:test:' + channel.id)], [Markup.button.callback('⬅️ Force-sub Settings', 'settings:forcesub')]]),
+        ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Test Again', 'fs:ts:' + channel.id)], [Markup.button.callback('⬅️ Force-sub Settings', 'settings:forcesub')]]),
       });
     }
   });
@@ -2597,7 +2597,7 @@ deliveryBot?.command('start', async (ctx) => {
     );
   });
 
-  controllerBot.action(/^settings:forcesub:toggle-channel:(.+)$/, async (ctx) => {
+  controllerBot.action(/^(?:settings:forcesub:toggle-channel:|fs:tc:)(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const channels = await getAllForceSubChannels();
     const channel = channels.find(ch => ch.id === ctx.match[1]);
@@ -2607,7 +2607,7 @@ deliveryBot?.command('start', async (ctx) => {
     return showForceSubAdminMenu(ctx);
   });
 
-  controllerBot.action(/^settings:forcesub:request:(.+)$/, async (ctx) => {
+  controllerBot.action(/^(?:settings:forcesub:request:|fs:rq:)(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const channels = await getAllForceSubChannels();
     const channel = channels.find(ch => ch.id === ctx.match[1]);
@@ -2632,7 +2632,7 @@ deliveryBot?.command('start', async (ctx) => {
     }
   });
 
-  controllerBot.action(/^settings:forcesub:confirm-delete:(.+)$/, async (ctx) => {
+  controllerBot.action(/^(?:settings:forcesub:confirm-delete:|fs:cd:)(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     const channels = await getAllForceSubChannels();
     const channel = channels.find(ch => ch.id === ctx.match[1]);
@@ -2641,13 +2641,13 @@ deliveryBot?.command('start', async (ctx) => {
     return ctx.editMessageText(
       '⚠️ <b>Delete force-sub channel?</b>\n\n📢 <b>' + escapeHtml(channel.title) + '</b>\n🆔 <code>' + escapeHtml(channel.channel_id) + '</code>\n\nThis removes it from the subscription requirements. This action cannot be undone.',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([
-        [Markup.button.callback('🗑️ Yes, delete channel', 'settings:forcesub:delete:' + channel.id)],
+        [Markup.button.callback('🗑️ Yes, delete channel', 'fs:del:' + channel.id)],
         [Markup.button.callback('↩️ Cancel', 'settings:forcesub')],
       ]) },
     );
   });
 
-  controllerBot.action(/^settings:forcesub:delete:(.+)$/, async (ctx) => {
+  controllerBot.action(/^(?:settings:forcesub:delete:|fs:del:)(.+)$/, async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.');
     try {
       await deleteForceSubChannel(ctx.match[1]);
