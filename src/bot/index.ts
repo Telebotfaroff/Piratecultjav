@@ -3084,7 +3084,7 @@ deliveryBot?.command('start', async (ctx) => {
   deliveryBot?.on('text', async (ctx) => {
     // Check force-sub for normal users
     if (ctx.from) {
-      const forceSub = await checkUserForceSub(deliveryBot!, ctx.from.id);
+      const forceSub = await checkUserForceSub(controllerBot, ctx.from.id);
       if (!forceSub.passed) {
         const buttons: any[] = forceSub.missingChannels.map(ch =>
           Markup.button.url(`Join ${ch.title}`, ch.invite_link || `https://t.me/${ch.channel_id.replace('@', '')}`)
