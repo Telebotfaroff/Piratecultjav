@@ -13,6 +13,7 @@ import { recordMissedCode, listMissedCodes, removeMissedCode } from '../services
 import { sendDumpVideoToUser, storeThumbnailInDumpChannel } from '../services/dump.ts';
 import { installMessageDeleteTimer } from '../services/messageDeleteTimer.ts';
 import { getSetting, setSetting } from '../services/settings.ts';
+import { addDeliveryBot, getDeliveryBots, getActiveDeliveryBotId, selectDeliveryBot, replaceActiveDeliveryBot, removeDeliveryBot } from '../services/deliveryBots.ts';
 import { classifyTelegramError, isRetryableTelegramError, withTelegramRetry } from '../services/telegramErrors.ts';
 import { recordVideoDeliveryEvent, getVideoDeliveryAnalytics } from '../services/videoAnalytics.ts';
 import { deliverVideoToUser, downloadAllSearchResults, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer } from './helpers.ts';
@@ -129,6 +130,11 @@ function availableRole(preferred: 'primary' | 'backup'): 'primary' | 'backup' | 
   return tokenForRole(fallback) ? fallback : null;
 }
 
+async function restartDeliveryRuntime(): Promise<boolean> {
+  const mode = activeTransportMode;
+  return mode === 'webhook' && webhookApp ? startBotWebhook(webhookApp) : startBotPolling();
+}
+
 function setupBots(controllerBot: Telegraf, deliveryBot: Telegraf | null): void {
 
   if (deliveryBot) {
@@ -218,38 +224,63 @@ function setupBots(controllerBot: Telegraf, deliveryBot: Telegraf | null): void 
   pendingNotFoundWatcher.unref?.();
 
 
-  controllerBot.command('setdeliverybot', async (ctx) => {
+  controllerBot.command('adddeliverybot', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return;
-    const token = ctx.message.text.split(' ')[1];
-    if (!token) return ctx.reply('Usage: /setdeliverybot <token>');
-    // Remove the command message so the token is not left visible in the admin chat.
+    const raw = ctx.message.text.replace(/^\/adddeliverybot\s*/i, '').trim();
+    const separator = raw.indexOf('|');
+    if (separator < 1) return ctx.reply('Usage: <code>/adddeliverybot Bot Name | BOT_TOKEN</code>', { parse_mode: 'HTML' });
+    const name = raw.slice(0, separator).trim().slice(0, 32);
+    const token = raw.slice(separator + 1).trim();
     await ctx.deleteMessage().catch(() => undefined);
-
-    // Validate the candidate before persisting it; never replace a working delivery token with an invalid one.
+    if (!name || !token) return ctx.reply('❌ Provide both a bot name and token.');
     try {
       const candidate = new Telegraf(token);
-      const candidateInfo = await candidate.telegram.getMe();
+      const info = await candidate.telegram.getMe();
       const controllerIds = new Set<number>();
       if (config.botToken) controllerIds.add((await new Telegraf(config.botToken).telegram.getMe()).id);
       if (config.backupBotToken) controllerIds.add((await new Telegraf(config.backupBotToken).telegram.getMe()).id);
-      if (controllerIds.has(candidateInfo.id)) {
-        return ctx.reply('❌ The delivery bot must be different from both controller bot roles.');
-      }
+      if (controllerIds.has(info.id)) return ctx.reply('❌ A controller bot cannot be registered as a delivery bot.');
+      await addDeliveryBot({ id: String(info.id), name, username: info.username || '', token });
+      const bots = await getDeliveryBots();
+      const activeId = await getActiveDeliveryBotId();
+      const selected = activeId === String(info.id);
+      await ctx.reply(
+        '✅ <b>Delivery bot added</b>\n\n🤖 <b>' + escapeHtml(name) + '</b> · @' + escapeHtml(info.username || 'unknown') +
+        '\n🧩 Configured bots: <b>' + bots.length + '</b>' +
+        (selected ? '\n\nFirst bot selected. Restarting runtime…' : '\n\nSelect it from Delivery Bot Manager when needed.'),
+        { parse_mode: 'HTML' },
+      );
+      if (selected) setTimeout(() => { void restartDeliveryRuntime(); }, 500);
     } catch (err) {
-      console.warn('[TelegramBot] Rejected invalid delivery bot token:', err instanceof Error ? err.message : String(err));
-      return ctx.reply('❌ Telegram rejected that bot token or controller credentials could not be verified. The current delivery bot configuration was not changed.');
+      console.warn('[DeliveryBot] Could not add bot:', err instanceof Error ? err.message : String(err));
+      return ctx.reply('❌ Could not add this bot. Token validation failed or it is already registered.');
     }
+  });
 
-    await setSetting('delivery_bot_token', token);
-    await ctx.reply('✅ Delivery bot token validated and saved. Restarting bots...');
-    setTimeout(() => {
-      const mode = getBotRuntimeStatus().mode;
-      if (mode === 'webhook' && webhookApp) {
-        void startBotWebhook(webhookApp);
-      } else {
-        void startBotPolling();
-      }
-    }, 1000);
+  controllerBot.command('setdeliverybot', async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return;
+    const token = ctx.message.text.split(/\s+/)[1];
+    if (!token) return ctx.reply('Usage: /setdeliverybot <token>');
+    await ctx.deleteMessage().catch(() => undefined);
+    try {
+      const candidate = new Telegraf(token);
+      const info = await candidate.telegram.getMe();
+      const controllerIds = new Set<number>();
+      if (config.botToken) controllerIds.add((await new Telegraf(config.botToken).telegram.getMe()).id);
+      if (config.backupBotToken) controllerIds.add((await new Telegraf(config.backupBotToken).telegram.getMe()).id);
+      if (controllerIds.has(info.id)) return ctx.reply('❌ A controller bot cannot be used as a delivery bot.');
+      await replaceActiveDeliveryBot({
+        id: String(info.id),
+        name: info.first_name || info.username || 'Delivery Bot',
+        username: info.username || '',
+        token,
+      });
+      await ctx.reply('✅ Active delivery bot replaced and validated. Restarting runtime…');
+      setTimeout(() => { void restartDeliveryRuntime(); }, 500);
+    } catch (err) {
+      console.warn('[DeliveryBot] Rejected replacement token:', err instanceof Error ? err.message : String(err));
+      return ctx.reply('❌ Telegram rejected that token or it is already registered. Existing configuration was not changed.');
+    }
   });
 
   // 2. Start command
@@ -1704,39 +1735,49 @@ deliveryBot?.command('start', async (ctx) => {
   });
 
   async function showDeliveryBotSettings(ctx: any, edit = true) {
-    const token = await getSetting<string>('delivery_bot_token', '');
-    const configured = typeof token === 'string' && token.length > 0;
+    const bots = await getDeliveryBots();
+    const activeId = await getActiveDeliveryBotId();
     const runtime = getBotRuntimeStatus();
-    const message =
-      '🚚 <b>DELIVERY BOT MANAGER</b>\n━━━━━━━━━━━━━━━━━━━━\n\n' +
-      'Configuration: <b>' + (configured ? '🟢 Added' : '⚪ Not added') + '</b>\n' +
-      'Runtime: <b>' + (runtime.deliveryActive ? '🟢 Running' : configured ? '🟠 Offline / retrying' : '⚪ Not configured') + '</b>\n\n' +
-      'Manage the separate bot used for user-facing commands and video delivery.\n' +
-      'Bot tokens are validated before saving and are never displayed.';
-    const rows: any[] = [
-      [Markup.button.callback(configured ? '🔁 Replace Delivery Bot' : '➕ Add Delivery Bot', 'deliverybot:add')],
+    const active = bots.find((bot) => bot.id === activeId) || null;
+    const lines = [
+      '🚚 <b>DELIVERY BOT MANAGER</b>',
+      '━━━━━━━━━━━━━━━━━━━━',
+      '',
+      '🤖 <b>Configured:</b> ' + bots.length,
+      '🟢 <b>Selected:</b> ' + (active ? escapeHtml(active.name) : 'None'),
+      '⚙️ <b>Runtime:</b> ' + (runtime.deliveryActive ? '🟢 Running' : active ? '🟠 Offline / retrying' : '⚪ Not configured'),
+      '',
+      '<i>Only the selected bot handles user-facing commands and video delivery. Switching is manual.</i>',
+      '',
     ];
-    if (configured) {
-      rows.push([Markup.button.callback('🔄 Restart Delivery Bot', 'deliverybot:restart')]);
-      rows.push([Markup.button.callback('🗑️ Remove Delivery Bot', 'deliverybot:remove:confirm')]);
+    if (!bots.length) lines.push('No delivery bots configured yet.');
+    const rows: any[] = [];
+    for (const bot of bots) {
+      const selected = bot.id === activeId;
+      lines.push((selected ? '🟢 ' : '⚪ ') + '<b>' + escapeHtml(bot.name) + '</b>' +
+        (bot.username ? ' · @' + escapeHtml(bot.username) : '') + (selected ? ' <i>(selected)</i>' : ''));
+      rows.push([
+        Markup.button.callback((selected ? '🟢 Selected: ' : '⚪ Use: ') + bot.name.slice(0, 18), 'deliverybot:select:' + bot.id),
+        Markup.button.callback('🗑️', 'deliverybot:remove:confirm:' + bot.id),
+      ]);
     }
+    rows.push([Markup.button.callback('➕ Add Delivery Bot', 'deliverybot:add')]);
+    if (active) rows.push([Markup.button.callback('🔄 Restart Selected Bot', 'deliverybot:restart')]);
     rows.push([Markup.button.callback('🔄 Refresh Status', 'settings:deliverybot')]);
     rows.push([Markup.button.callback('⬅️ Admin Center', 'settings:main')]);
+    const message = lines.join('\n');
     const options = { parse_mode: 'HTML' as const, ...Markup.inlineKeyboard(rows) };
-    if (edit && ctx.callbackQuery) {
-      return ctx.editMessageText(message, options).catch(() => ctx.reply(message, options));
-    }
+    if (edit && ctx.callbackQuery) return ctx.editMessageText(message, options).catch(() => ctx.reply(message, options));
     return ctx.reply(message, options);
   }
 
   controllerBot.action('settings:deliverybot', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
     await ctx.answerCbQuery();
-    try {
-      return await showDeliveryBotSettings(ctx, true);
-    } catch (err) {
-      console.error('[DeliveryBot] Could not load settings:', err);
-      return ctx.reply('❌ Could not load Delivery Bot settings.');
+    try { return await showDeliveryBotSettings(ctx, true); }
+    catch (err) {
+      console.error('[DeliveryBot] Could not load manager:', err);
+      return ctx.reply('❌ Could not load Delivery Bot Manager.');
     }
   });
 
@@ -1745,34 +1786,58 @@ deliveryBot?.command('start', async (ctx) => {
     await ctx.answerCbQuery();
     await setAdminSession(ctx.from.id, 'delivery_bot_token', 'awaiting_token');
     return ctx.reply(
-      '➕ <b>Add / Replace Delivery Bot</b>\n\nSend the bot token from @BotFather in your next message.\nThe token message will be deleted after receipt.\n\nSend /cancel to cancel.',
+      '➕ <b>Add Delivery Bot</b>\n\nSend the bot token from @BotFather in your next message.\nThe token message will be deleted after receipt.\n\nSend /cancel to cancel.',
       { parse_mode: 'HTML' },
     );
   });
 
-  controllerBot.action('deliverybot:remove:confirm', async (ctx) => {
-    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+  controllerBot.action(/^deliverybot:select:(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
+    const id = ctx.match[1];
+    if (id === await getActiveDeliveryBotId()) {
+      await ctx.answerCbQuery('This bot is already selected.');
+      return showDeliveryBotSettings(ctx, true);
+    }
+    try {
+      await selectDeliveryBot(id);
+      await ctx.answerCbQuery('Switching delivery bot…');
+      const started = await restartDeliveryRuntime();
+      if (!started) return ctx.reply('⚠️ Bot selected, but runtime could not restart. Check logs and refresh status.');
+      return showDeliveryBotSettings(ctx, true);
+    } catch (err) {
+      console.error('[DeliveryBot] Selection failed:', err);
+      return ctx.answerCbQuery('Could not select this bot.', { show_alert: true });
+    }
+  });
+
+  controllerBot.action(/^deliverybot:remove:confirm:(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
+    const id = ctx.match[1];
+    const bot = (await getDeliveryBots()).find((item) => item.id === id);
+    if (!bot) return ctx.answerCbQuery('Bot not found.', { show_alert: true });
     await ctx.answerCbQuery();
     return ctx.editMessageText(
-      '⚠️ <b>Remove Delivery Bot?</b>\n\nUser-facing bot commands and video delivery will be unavailable until another delivery bot is added.',
+      '⚠️ <b>Remove delivery bot?</b>\n\n🤖 <b>' + escapeHtml(bot.name) + '</b>' +
+      (bot.username ? ' · @' + escapeHtml(bot.username) : '') + '\n\nThis removes its saved configuration. Continue?',
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([
-        [Markup.button.callback('🗑️ Yes, remove it', 'deliverybot:remove')],
-        [Markup.button.callback('⬅️ Cancel', 'settings:deliverybot')],
+        [Markup.button.callback('🗑️ Yes, remove', 'deliverybot:remove:' + id)],
+        [Markup.button.callback('↩️ Cancel', 'settings:deliverybot')],
       ]) },
     );
   });
 
-  controllerBot.action('deliverybot:remove', async (ctx) => {
-    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
-    await ctx.answerCbQuery('Removing delivery bot…');
-    await setSetting('delivery_bot_token', '');
-    await clearAdminSession(ctx.from.id);
-    await ctx.editMessageText('✅ Delivery bot removed. Restarting the controller runtime…').catch(() => undefined);
-    setTimeout(() => {
-      const mode = getBotRuntimeStatus().mode;
-      if (mode === 'webhook' && webhookApp) void startBotWebhook(webhookApp);
-      else void startBotPolling();
-    }, 500);
+  controllerBot.action(/^deliverybot:remove:(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
+    try {
+      const result = await removeDeliveryBot(ctx.match[1]);
+      await ctx.answerCbQuery('Delivery bot removed.');
+      const started = await restartDeliveryRuntime();
+      if (!started && result.active) return ctx.reply('⚠️ Bot removed and next bot selected, but runtime restart failed. Check logs.');
+      return showDeliveryBotSettings(ctx, true);
+    } catch (err) {
+      console.error('[DeliveryBot] Removal failed:', err);
+      return ctx.answerCbQuery('Could not remove this bot.', { show_alert: true });
+    }
   });
 
   controllerBot.action('deliverybot:restart', async (ctx) => {
@@ -3280,17 +3345,21 @@ deliveryBot?.command('start', async (ctx) => {
         if (controllerIds.has(candidateInfo.id)) {
           return ctx.reply('❌ The delivery bot must be different from both controller bot roles. Send another token or /cancel.');
         }
-        await setSetting('delivery_bot_token', token);
+        await addDeliveryBot({
+          id: String(candidateInfo.id),
+          name: candidateInfo.first_name || candidateInfo.username || 'Delivery Bot',
+          username: candidateInfo.username || '',
+          token,
+        });
         await clearAdminSession(ctx.from.id);
+        const activeId = await getActiveDeliveryBotId();
+        const selected = activeId === String(candidateInfo.id);
         await ctx.reply(
-          '✅ <b>Delivery bot validated and saved.</b>\n🤖 @' + escapeHtml(candidateInfo.username || 'bot') + '\n\nRestarting the bot runtime now…',
+          '✅ <b>Delivery bot added.</b>\n🤖 @' + escapeHtml(candidateInfo.username || 'bot') +
+          (selected ? '\n\nThis is the first bot and is now selected. Restarting runtime…' : '\n\nChoose it from Delivery Bot Manager when you want to use it.'),
           { parse_mode: 'HTML' },
         );
-        setTimeout(() => {
-          const mode = getBotRuntimeStatus().mode;
-          if (mode === 'webhook' && webhookApp) void startBotWebhook(webhookApp);
-          else void startBotPolling();
-        }, 500);
+        if (selected) setTimeout(() => { void restartDeliveryRuntime(); }, 500);
       } catch (err) {
         console.warn('[DeliveryBot] Rejected invalid delivery token:', err instanceof Error ? err.message : String(err));
         return ctx.reply('❌ Telegram rejected that token or the controller credentials could not be verified. The existing delivery bot was not changed. Send a valid token or /cancel.');
