@@ -58,7 +58,7 @@ async function persistBots(bots: DeliveryBotConfig[], activeId: string | null): 
 
 export async function addDeliveryBot(bot: Omit<DeliveryBotConfig, 'addedAt'>): Promise<void> {
   const bots = await getDeliveryBots();
-  if (bots.some((item) => item.id === bot.id)) {
+  if (bots.some((item) => item.id === bot.id || item.token === bot.token)) {
     throw new Error('This Telegram bot is already registered.');
   }
   const next = [...bots, { ...bot, addedAt: new Date().toISOString() }];
