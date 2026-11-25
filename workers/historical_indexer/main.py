@@ -15,6 +15,10 @@ import asyncpg
 from cryptography.fernet import Fernet
 from pyrogram import Client
 from pyrogram.types import Message
+try:
+    from .telegram_auth import TelegramAuthManager
+except ImportError:
+    from telegram_auth import TelegramAuthManager
 
 LOG = logging.getLogger("piratecult.historical_indexer")
 MEDIA_ATTRIBUTES = {
@@ -28,6 +32,7 @@ MEDIA_ATTRIBUTES = {
     "sticker": "sticker",
 }
 CODE_PATTERN = re.compile(r"\b(?:FC2[-_]?\d{5,8}|[A-Z]{2,6}[-_]?\d{2,5})\b", re.IGNORECASE)
+PART_PATTERN = re.compile(r"\b(?:part|pt|cd|disc|disk)\s*[-_.#]?\s*(\d{1,2})(?:\s*(?:of|/)\s*(\d{1,2}))?\b", re.IGNORECASE)
 
 
 def required_env(name: str) -> str:
@@ -37,31 +42,19 @@ def required_env(name: str) -> str:
     return value
 
 
-def resolve_session_string(
-    environ: Mapping[str, str], encrypted_value: str | None
-) -> tuple[str, str]:
-    """Prefer a Render-provided session; otherwise decrypt the Supabase fallback."""
-    session_string = environ.get("PYROGRAM_SESSION_STRING", "").strip()
-    if session_string:
-        return session_string, "environment"
-
-    if not encrypted_value:
-        raise RuntimeError(
-            "No Pyrogram session configured. Set PYROGRAM_SESSION_STRING in Render "
-            "or store an encrypted session in Supabase private_runtime_secrets."
-        )
-
+def resolve_session_string(environ: Mapping[str, str], encrypted_value: str | None) -> tuple[str, str]:
+    """Prefer the database session so an admin can rotate the connected account."""
     encryption_key = environ.get("SESSION_ENCRYPTION_KEY", "").strip()
-    if not encryption_key:
-        raise RuntimeError(
-            "Missing SESSION_ENCRYPTION_KEY for the encrypted Supabase Pyrogram session."
-        )
-
-    try:
-        decrypted = Fernet(encryption_key.encode()).decrypt(encrypted_value.encode()).decode()
-    except Exception as exc:
-        raise RuntimeError("Could not decrypt the configured Pyrogram session.") from exc
-    return decrypted, "supabase"
+    if encrypted_value:
+        if not encryption_key:
+            raise RuntimeError("Missing SESSION_ENCRYPTION_KEY for the encrypted Supabase Pyrogram session.")
+        try:
+            decrypted = Fernet(encryption_key.encode()).decrypt(encrypted_value.encode()).decode()
+        except Exception as exc:
+            raise RuntimeError("Could not decrypt the configured Supabase Pyrogram session.") from exc
+        return decrypted, "supabase"
+    session_string = environ.get("PYROGRAM_SESSION_STRING", "").strip()
+    return (session_string, "environment") if session_string else ("", "awaiting_admin_login")
 
 
 def json_list(value: Any, fallback: list[str]) -> list[str]:
@@ -95,10 +88,18 @@ def media_details(message: Message, allowed: set[str]) -> dict[str, Any] | None:
             continue
         caption = message.caption or message.text or ""
         code_match = CODE_PATTERN.search(caption)
+        part_match = PART_PATTERN.search(caption)
+        part_number = int(part_match.group(1)) if part_match else None
+        part_total = int(part_match.group(2)) if part_match and part_match.group(2) else None
+        clean_title = re.sub(r"[^a-zA-Z0-9]+", " ", PART_PATTERN.sub("", caption)).strip().lower()
+        part_group_key = (code_match.group(0).upper() if code_match else clean_title) if part_number else None
         return {
             "media_type": media_type,
             "caption": caption[:20000] or None,
             "code": code_match.group(0).upper() if code_match else None,
+            "part_group_key": part_group_key[:180] if part_group_key else None,
+            "part_number": part_number,
+            "part_total": part_total,
             "file_unique_id": getattr(item, "file_unique_id", None),
             "mime_type": getattr(item, "mime_type", None),
             "file_size": getattr(item, "file_size", None),
@@ -123,6 +124,9 @@ class HistoricalIndexer:
         self.stop_event = asyncio.Event()
         self.pool: asyncpg.Pool | None = None
         self.client: Client | None = None
+        self.auth_manager: TelegramAuthManager | None = None
+        self.last_settings_refresh = 0.0
+        self.last_auto_scan_check = 0.0
 
     async def start(self) -> None:
         database_url = required_env("DATABASE_URL")
@@ -135,35 +139,28 @@ class HistoricalIndexer:
             command_timeout=30,
             ssl="require" if os.environ.get("DATABASE_SSL", "require").strip().lower() not in {"false", "disable", "disabled"} else False,
         )
-        # Avoid the Supabase secret lookup entirely when Render supplies a session.
-        # The environment variable always takes priority over the encrypted fallback.
-        session_from_env = bool(os.environ.get("PYROGRAM_SESSION_STRING", "").strip())
-        encrypted = None
-        if not session_from_env:
-            encrypted = await self.pool.fetchval(
-                "SELECT encrypted_value FROM public.private_runtime_secrets "
-                "WHERE secret_name = 'pyrogram_session_string'"
-            )
+        self.auth_manager = TelegramAuthManager(api_id, api_hash, required_env("SESSION_ENCRYPTION_KEY"))
+        encrypted = await self.pool.fetchval(
+            "SELECT encrypted_value FROM public.private_runtime_secrets WHERE secret_name='pyrogram_session_string'"
+        )
         session_string, session_source = resolve_session_string(os.environ, encrypted)
         LOG.info("Pyrogram session source selected | source=%s", session_source)
-
-        self.client = Client(
-            "piratecult-historical-indexer",
-            api_id=api_id,
-            api_hash=api_hash,
-            session_string=session_string,
-            no_updates=True,
-        )
-        # Drop the local reference as soon as Pyrogram has received the value.
-        del session_string
-        await self.client.start()
-        me = await self.client.get_me()
-        LOG.info("Pyrogram session connected | account_id=%s", me.id)
+        if session_string:
+            self.client = Client("piratecult-historical-indexer", api_id=api_id, api_hash=api_hash,
+                                 session_string=session_string, no_updates=True)
+            del session_string
+            await self.client.start()
+            me = await self.client.get_me()
+            LOG.info("Pyrogram session connected | account_id=%s", me.id)
+        else:
+            LOG.info("No Telegram user session configured; waiting for admin login.")
 
     async def stop(self) -> None:
         self.stop_event.set()
         if self.client and self.client.is_connected:
             await self.client.stop()
+        if self.auth_manager:
+            await self.auth_manager.stop()
         if self.pool:
             await self.pool.close()
 
@@ -185,14 +182,16 @@ class HistoricalIndexer:
                     WITH candidate AS (
                       SELECT id
                       FROM public.historical_index_jobs
-                      WHERE status = 'queued'
-                         OR (status = 'running' AND lease_expires_at < NOW())
+                      WHERE (status='queued' AND (next_retry_at IS NULL OR next_retry_at<=NOW()))
+                         OR (status='running' AND lease_expires_at<NOW())
                       ORDER BY created_at ASC
                       FOR UPDATE SKIP LOCKED
                       LIMIT 1
                     )
                     UPDATE public.historical_index_jobs AS job
                     SET status = 'running',
+                        attempt_count = attempt_count + 1,
+                        next_retry_at = NULL,
                         lease_owner = $1,
                         lease_expires_at = NOW() + INTERVAL '3 minutes',
                         heartbeat_at = NOW(),
@@ -244,10 +243,13 @@ class HistoricalIndexer:
                       (job_id, source_id, last_message_id, updated_at)
                     VALUES ($1, $2, $3, NOW())
                     ON CONFLICT (job_id) DO UPDATE
-                    SET last_message_id = EXCLUDED.last_message_id,
-                        updated_at = NOW()
+                    SET last_message_id = EXCLUDED.last_message_id, updated_at = NOW()
                     """,
                     job["id"], job["source_id"], last_message_id,
+                )
+                await connection.execute(
+                    "UPDATE public.index_sources SET last_scanned_message_id=$2, updated_at=NOW() WHERE id=$1",
+                    job["source_id"], last_message_id,
                 )
                 if state["cancel_requested"]:
                     return "cancel"
@@ -266,9 +268,9 @@ class HistoricalIndexer:
                 INSERT INTO public.media_source_refs (
                   source_chat_id, source_message_id, media_type, code, caption,
                   media_group_id, file_unique_id, mime_type, file_size,
-                  message_date, metadata
+                  message_date, metadata, part_group_key, part_number, part_total
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14)
                 ON CONFLICT (source_chat_id, source_message_id) DO NOTHING
                 RETURNING id
                 """,
@@ -276,7 +278,21 @@ class HistoricalIndexer:
                 details["code"], details["caption"], details["media_group_id"],
                 details["file_unique_id"], details["mime_type"], details["file_size"],
                 details["message_date"], json.dumps(details["metadata"]),
+                details["part_group_key"], details["part_number"], details["part_total"],
             )
+            if inserted and details["part_group_key"]:
+                await connection.execute(
+                    """
+                    INSERT INTO public.media_part_groups(source_chat_id,group_key,title,expected_parts,part_count,updated_at)
+                    VALUES ($1,$2,$3,$4,1,NOW())
+                    ON CONFLICT(source_chat_id,group_key) DO UPDATE SET
+                      expected_parts=GREATEST(COALESCE(public.media_part_groups.expected_parts,0),COALESCE(EXCLUDED.expected_parts,0)),
+                      part_count=(SELECT COUNT(*) FROM public.media_source_refs WHERE source_chat_id=$1 AND part_group_key=$2),
+                      updated_at=NOW()
+                    """,
+                    source_chat_id, details["part_group_key"],
+                    details["caption"][:180] if details["caption"] else None, details["part_total"],
+                )
             return "indexed" if inserted else "duplicate"
 
     async def resolve_peer_from_dialogs(self, peer_id: int):
@@ -456,25 +472,78 @@ class HistoricalIndexer:
             """,
             job_id, status, self.worker_id,
         )
+        if status == "completed":
+            await self.pool.execute(
+                "UPDATE public.index_sources SET last_scan_completed_at=NOW(),updated_at=NOW() WHERE id=(SELECT source_id FROM public.historical_index_jobs WHERE id=$1)",
+                job_id,
+            )
 
     async def fail_job(self, job_id: int, error: str) -> None:
         assert self.pool
         await self.pool.execute(
             """
             UPDATE public.historical_index_jobs
-            SET status = 'failed', error = $2, lease_owner = NULL,
-                lease_expires_at = NULL, finished_at = NOW(), updated_at = NOW()
+            SET status = CASE WHEN attempt_count < max_attempts THEN 'queued' ELSE 'failed' END,
+                error = $2, lease_owner = NULL, lease_expires_at = NULL,
+                next_retry_at = CASE WHEN attempt_count < max_attempts
+                  THEN NOW() + make_interval(secs => LEAST(300,15*power(2,GREATEST(attempt_count-1,0)))::integer)
+                  ELSE NULL END,
+                finished_at = CASE WHEN attempt_count < max_attempts THEN NULL ELSE NOW() END,
+                updated_at = NOW()
             WHERE id = $1 AND lease_owner = $3
             """,
             job_id, error, self.worker_id,
         )
+
+    async def refresh_runtime_settings(self) -> None:
+        assert self.pool
+        now = asyncio.get_running_loop().time()
+        if now-self.last_settings_refresh < 30:
+            return
+        self.last_settings_refresh = now
+        rows = await self.pool.fetch("SELECT key,value FROM public.bot_settings WHERE key IN ('historical_indexer_batch_size','historical_indexer_poll_interval')")
+        for row in rows:
+            try:
+                value = int(str(row["value"]).strip('"'))
+            except (TypeError, ValueError):
+                continue
+            if row["key"] == "historical_indexer_batch_size":
+                self.batch_size = min(max(value,10),500)
+            elif row["key"] == "historical_indexer_poll_interval":
+                self.poll_interval = min(max(value,2),30)
+
+    async def enqueue_due_sources(self) -> None:
+        assert self.pool
+        raw = await self.pool.fetchval("SELECT value FROM public.bot_settings WHERE key='historical_indexer_scan_interval_minutes'")
+        try:
+            interval = min(max(int(str(raw).strip('"')),15),10080) if raw is not None else 1440
+        except (TypeError, ValueError):
+            interval = 1440
+        await self.pool.execute("""
+          INSERT INTO public.historical_index_jobs(source_id,source_chat_id,status,media_mode,requested_by)
+          SELECT s.id,s.source_chat_id,'queued',s.media_mode,s.created_by
+          FROM public.index_sources s
+          WHERE s.is_active
+            AND (s.last_scan_completed_at IS NULL OR s.last_scan_completed_at<NOW()-make_interval(mins=>$1))
+            AND NOT EXISTS (SELECT 1 FROM public.historical_index_jobs j
+              WHERE j.source_id=s.id AND j.status IN ('queued','running','paused'))
+            AND NOT EXISTS (SELECT 1 FROM public.historical_index_jobs f
+              WHERE f.source_id=s.id AND f.status='failed' AND f.created_at>NOW()-INTERVAL '24 hours')
+        """, interval)
 
     async def run(self) -> None:
         try:
             await self.start()
             LOG.info("Historical indexer worker ready | worker_id=%s", self.worker_id)
             while not self.stop_event.is_set():
-                if await self.indexing_enabled():
+                if self.auth_manager and self.pool and await self.auth_manager.process_one(self.pool,self):
+                    continue
+                if self.client and await self.indexing_enabled():
+                    await self.refresh_runtime_settings()
+                    now=asyncio.get_running_loop().time()
+                    if now-self.last_auto_scan_check>=60:
+                        self.last_auto_scan_check=now
+                        await self.enqueue_due_sources()
                     job = await self.claim_job()
                     if job:
                         await self.process_job(job)
