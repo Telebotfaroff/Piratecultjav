@@ -44,6 +44,18 @@ class HistoricalIndexerHelperTests(unittest.TestCase):
         self.assertEqual(result["file_unique_id"], "unique-1")
         self.assertEqual(result["message_date"].tzinfo, timezone.utc)
 
+    def test_multipart_caption_is_grouped(self):
+        message = SimpleNamespace(
+            photo=None, video=SimpleNamespace(file_unique_id="part1", mime_type="video/mp4", file_size=1234),
+            document=None, animation=None, audio=None, voice=None, video_note=None, sticker=None,
+            caption="ABC Movie Part 1 of 2", text=None, media_group_id=None,
+            date=datetime(2026, 11, 3, 12, 0), id=43, chat=SimpleNamespace(id=-100123),
+        )
+        result = media_details(message, {"video"})
+        self.assertEqual(result["part_group_key"], "abc movie")
+        self.assertEqual(result["part_number"], 1)
+        self.assertEqual(result["part_total"], 2)
+
     def test_disallowed_media_is_skipped(self):
         message = SimpleNamespace(
             photo=None, video=SimpleNamespace(file_unique_id="u"), document=None,
@@ -56,13 +68,15 @@ class HistoricalIndexerHelperTests(unittest.TestCase):
     def test_json_list_falls_back_for_invalid_json(self):
         self.assertEqual(json_list("not-json", ["video"]), ["video"])
 
-    def test_render_session_takes_priority_over_encrypted_supabase_session(self):
-        session, source = resolve_session_string(
-            {"PYROGRAM_SESSION_STRING": "  render-session  "},
-            "not-a-valid-encrypted-value",
-        )
+    def test_environment_session_is_used_when_database_session_is_absent(self):
+        session, source = resolve_session_string({"PYROGRAM_SESSION_STRING": " render-session "}, None)
         self.assertEqual(session, "render-session")
         self.assertEqual(source, "environment")
+
+    def test_missing_session_allows_admin_login(self):
+        session, source = resolve_session_string({}, None)
+        self.assertEqual(session, "")
+        self.assertEqual(source, "awaiting_admin_login")
 
     def test_encrypted_supabase_session_is_used_as_fallback(self):
         key = Fernet.generate_key().decode()
