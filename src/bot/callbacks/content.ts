@@ -10,11 +10,13 @@ const {
   checkUserForceSub, getAllForceSubChannels, upsertForceSubChannel, updateForceSubChannel, deleteForceSubChannel, createForceSubInviteLink,
   getAdminSession, setAdminSession, clearAdminSession, javtifulProvider, sendDumpVideoToUser, storeThumbnailInDumpChannel,
   installMessageDeleteTimer, getSetting, setSetting, classifyTelegramError, withTelegramRetry, recordVideoDeliveryEvent, getVideoDeliveryAnalytics,
-  deliverVideoToUser, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery,
+  deliverVideoToUser, deliverMediaPartGroup, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery,
   showForceSubAdminMenu, showAdminSettings, formatTimer, parsePremiumPayload, sendPremiumStore, sendPremiumInvoice,
 } = botDeps;
 
 export function registerContentCallbacks(bot: Telegraf) {
+  bot.action(/^downloadparts:([0-9a-f-]+)$/i, async (ctx) => { await ctx.answerCbQuery('Preparing all parts...'); return deliverMediaPartGroup(bot, ctx, ctx.match[1]); });
+
   bot.action(/^download:(.+)$/, async (ctx) => {
       const identifier = ctx.match[1];
       await ctx.answerCbQuery('Fetching video...');

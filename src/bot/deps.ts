@@ -12,7 +12,7 @@ import { installMessageDeleteTimer } from '../services/messageDeleteTimer.ts';
 import { getSetting, setSetting } from '../services/settings.ts';
 import { classifyTelegramError, withTelegramRetry } from '../services/telegramErrors.ts';
 import { recordVideoDeliveryEvent, getVideoDeliveryAnalytics } from '../services/videoAnalytics.ts';
-import { deliverVideoToUser, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer } from './helpers.ts';
+import { deliverVideoToUser, deliverMediaPartGroup, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer } from './helpers.ts';
 import { getPremiumPackages, savePremiumPackage, removePremiumPackage, togglePremiumPackage, parsePremiumPayload, sendPremiumStore, sendPremiumInvoice } from './premium.ts';
 
 export const botDeps = {
@@ -25,6 +25,6 @@ export const botDeps = {
   checkUserForceSub, getAllForceSubChannels, upsertForceSubChannel, updateForceSubChannel, deleteForceSubChannel, createForceSubInviteLink,
   getAdminSession, setAdminSession, clearAdminSession, javtifulProvider, sendDumpVideoToUser, storeThumbnailInDumpChannel,
   installMessageDeleteTimer, getSetting, setSetting, classifyTelegramError, withTelegramRetry, recordVideoDeliveryEvent, getVideoDeliveryAnalytics,
-  deliverVideoToUser, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery,
+  deliverVideoToUser, deliverMediaPartGroup, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery,
   showForceSubAdminMenu, showAdminSettings, formatTimer, getPremiumPackages, savePremiumPackage, removePremiumPackage, togglePremiumPackage, parsePremiumPayload, sendPremiumStore, sendPremiumInvoice,
 };

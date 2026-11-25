@@ -10,6 +10,7 @@ import { getSetting, setSetting } from '../services/settings.ts';
 import { sendDumpVideoToUser } from '../services/dump.ts';
 import { recordVideoDeliveryEvent, getVideoDeliveryAnalytics } from '../services/videoAnalytics.ts';
 import { getActiveBotRole } from './state.ts';
+import { searchMediaPartGroups, getMediaPartGroup } from '../services/mediaParts.ts';
 
 async function notifyNotFound(ctx: any, query: string, source: string): Promise<void> {
   try {
@@ -245,6 +246,35 @@ async function deliverVideoToUser(bot: Telegraf, ctx: any, identifier: string, s
   }
 }
 
+async function deliverMediaPartGroup(bot: Telegraf, ctx: any, groupId: string) {
+  if(!ctx.from||!ctx.chat)return;
+  let reserved=false;let reservationId:string|null=null;let sent=0;
+  try {
+    const group=await getMediaPartGroup(groupId);
+    if(!group||group.parts.length<2)return ctx.reply('⚠️ Multipart collection not found.');
+    if(group.expected_parts&&group.parts.length<group.expected_parts)return ctx.reply(`⚠️ Collection incomplete: ${group.parts.length}/${group.expected_parts} parts indexed. Try again after indexing finishes.`);
+    if(!isAdmin(ctx.from.id)){
+      const fs=await checkUserForceSub(bot,ctx.from.id);
+      if(!fs.passed){const rows=fs.missingChannels.map(ch=>[Markup.button.url(ch.request_mode?'📨 Request to Join '+ch.title:'Join '+ch.title,ch.invite_link||'https://t.me/'+ch.channel_id.replace('@',''))]);return ctx.reply('🔒 Join the required channel(s), then tap Download All Parts again.',Markup.inlineKeyboard(rows));}
+      reservationId=randomUUID();const allowance=await consumeVideoDownload(ctx.from.id,reservationId);
+      if(!allowance.allowed)return ctx.reply('🚫 Daily video limit reached.');reserved=true;
+    }
+    const parts=[...group.parts].sort((a,b)=>a.part_number-b.part_number||a.source_message_id-b.source_message_id);
+    for(let i=0;i<parts.length;i++){
+      await ctx.telegram.copyMessage(ctx.chat.id,parts[i].source_chat_id,Number(parts[i].source_message_id),{
+        caption:i===0?`🎬 <b>${escapeHtml(group.title||group.group_key)}</b>\\n📦 Part 1/${parts.length}\\n📢 More videos: https://t.me/piratedcult`:`📦 Part ${i+1}/${parts.length}`,
+        parse_mode:'HTML'
+      });sent++;
+    }
+    if(reserved&&reservationId){try{await markVideoDownloadDelivered(reservationId);}catch(e){console.error('[Multipart] quota confirmation failed',e);}reserved=false;}
+    return ctx.reply(`✅ All ${sent} parts sent in order.`);
+  } catch(err) {
+    if(reserved&&reservationId&&ctx.from&&sent===0){try{await refundVideoDownload(ctx.from.id,reservationId);}catch(e){console.error('[Multipart] refund failed',e);}}
+    console.error('[Multipart] delivery failed',err);
+    return ctx.reply(sent?`⚠️ Sent ${sent} part(s), but a later part failed. Contact an admin before retrying.`:'⚠️ Could not send the collection. Check delivery bot access to the source channel.');
+  }
+}
+
 async function showAdminVideoEditMenu(ctx: any, videoId: string) {
   const video = await getVideoById(videoId);
   if (!video) {
@@ -449,6 +479,7 @@ async function handleSearchQuery(ctx: any, rawQuery: string, page = 0) {
     }
 
     const { videos, total } = await searchVideos(rawQuery, pageSize, offset);
+    const partGroups = page === 0 ? await searchMediaPartGroups(rawQuery, 10) : [];
 
     if (videos.length === 0) {
       await notifyNotFound(ctx, rawQuery, 'catalog search');
@@ -466,6 +497,15 @@ async function handleSearchQuery(ctx: any, rawQuery: string, page = 0) {
     html += `─────────────────────────\n\n`;
 
     const keyboardButtons: any[] = [];
+    if (partGroups.length) {
+      html += '🎞️ <b>Multipart collections</b>\\n<i>All parts are sent in order with one button.</i>\\n\\n';
+      for (const group of partGroups) {
+        const title = cleanTitle(group.title || group.group_key, group.group_key);
+        html += `📦 <b>${escapeHtml(title)}</b> · ${group.part_count}/${group.expected_parts || group.part_count} parts\\n`;
+        keyboardButtons.push([Markup.button.callback(`⬇️ Download All Parts (${group.part_count})`, `downloadparts:${group.id}`)]);
+      }
+      html += '\\n';
+    }
 
     const userIsAdmin = Boolean(ctx.from && isAdmin(ctx.from.id));
 
@@ -742,4 +782,4 @@ function formatTimer(seconds: number): string {
   return seconds + ' second(s)';
 }
 
-export { deliverVideoToUser, downloadAllSearchResults, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer };
+export { deliverVideoToUser, deliverMediaPartGroup, downloadAllSearchResults, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer };
