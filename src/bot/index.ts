@@ -130,9 +130,56 @@ function availableRole(preferred: 'primary' | 'backup'): 'primary' | 'backup' | 
   return tokenForRole(fallback) ? fallback : null;
 }
 
+let deliveryRestartPromise: Promise<boolean> | null = null;
+
 async function restartDeliveryRuntime(): Promise<boolean> {
-  const mode = activeTransportMode;
-  return mode === 'webhook' && webhookApp ? startBotWebhook(webhookApp) : startBotPolling();
+  if (deliveryRestartPromise) return deliveryRestartPromise;
+  deliveryRestartPromise = (async () => {
+    if (!configuredDeliveryToken) {
+      try { configuredDeliveryToken = await getSetting<string>('delivery_bot_token', ''); } catch {}
+    }
+    if (!configuredDeliveryToken) {
+      isDeliveryBotConfigured = false;
+      isDeliveryBotActive = false;
+      return false;
+    }
+    isDeliveryBotConfigured = true;
+
+    // Restart only the delivery bot. Never relaunch the controller poller here:
+    // doing so can create overlapping getUpdates requests and Telegram 409 conflicts.
+    if (deliveryRecoveryTimer) { clearTimeout(deliveryRecoveryTimer); deliveryRecoveryTimer = null; }
+    const bot = deliveryBotInstance;
+    if (bot) {
+      try { bot.stop('Manual delivery bot restart'); } catch {}
+    }
+    isDeliveryBotActive = false;
+
+    if (activeTransportMode === 'webhook' && webhookApp && config.webhookUrl && config.webhookSecret) {
+      try {
+        const target = bot || new Telegraf(configuredDeliveryToken);
+        deliveryBotInstance = target;
+        await target.telegram.getMe();
+        await target.telegram.setWebhook(`${config.webhookUrl}${config.webhookPath}`, {
+          secret_token: config.webhookSecret,
+          drop_pending_updates: false,
+        });
+        isDeliveryBotActive = true;
+        return true;
+      } catch (error) {
+        console.error('[DeliveryBot] Webhook restart failed:', error);
+        isDeliveryBotActive = false;
+        return false;
+      }
+    }
+
+    // Keep the existing Telegraf instance and its registered delivery handlers.
+    if (!deliveryBotInstance) {
+      console.error('[DeliveryBot] Cannot restart: delivery bot instance is missing; a full service restart is required to rebuild handlers safely.');
+      return false;
+    }
+    return startDeliveryBotWithRecovery();
+  })().finally(() => { deliveryRestartPromise = null; });
+  return deliveryRestartPromise;
 }
 
 function setupBots(controllerBot: Telegraf, deliveryBot: Telegraf | null): void {
@@ -1868,26 +1915,25 @@ deliveryBot?.command('start', async (ctx) => {
   });
 
   controllerBot.action('deliverybot:restart', async (ctx) => {
-    if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
+    if (!isAdmin(ctx.from?.id)) {
+      await ctx.answerCbQuery('Admin access required.', { show_alert: true }).catch(() => undefined);
+      return;
+    }
+    // Acknowledge Telegram's callback immediately, before any database/network work.
+    await ctx.answerCbQuery('Restarting delivery bot…').catch(() => undefined);
     try {
-      const token = await getSetting<string>('delivery_bot_token', '');
-      if (!token) {
-        await ctx.answerCbQuery('No delivery bot token configured.', { show_alert: true });
-        return showDeliveryBotSettings(ctx, true);
-      }
-      await ctx.answerCbQuery('Restarting delivery runtime…');
       const started = await restartDeliveryRuntime();
       const status = await getDeliveryBotDisplayStatus();
       if (!started || !status.label.startsWith('🟢')) {
-        await ctx.reply('⚠️ Restart attempted, but the delivery bot is not confirmed online. ' + status.label + '\\n' + status.detail);
+        await ctx.reply('⚠️ Delivery bot restart was not confirmed. ' + status.label + '\\n' + status.detail);
       } else {
         await ctx.reply('✅ Delivery bot restarted and health-checked successfully.');
       }
       return showDeliveryBotSettings(ctx, true);
     } catch (error) {
       console.error('[DeliveryBot] Manual restart failed:', error);
-      await ctx.answerCbQuery('Restart failed.', { show_alert: true }).catch(() => undefined);
-      return showDeliveryBotSettings(ctx, true);
+      await ctx.reply('⚠️ Delivery bot restart failed: ' + (error instanceof Error ? error.message : String(error)).slice(0, 250)).catch(() => undefined);
+      return showDeliveryBotSettings(ctx, true).catch(() => undefined);
     }
   });
 
