@@ -718,7 +718,7 @@ async function showAdminSettings(ctx: any) {
     '🗑️ Auto-delete: <b>' + formatTimer(deleteTimer) + '</b>',
     '',
     '<i>Select a settings category</i>',
-  ].join('\\n');
+  ].join('\n');
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('📊 Overview & Analytics', 'admin:overview')],
     [Markup.button.callback('🎬 Content & Indexing', 'admin:content'), Markup.button.callback('🕘 History Scanner', 'admin:history')],
