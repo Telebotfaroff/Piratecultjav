@@ -12,14 +12,13 @@ export class HistoricalIndexerProcess {
 
   start(): void {
     if (process.env.HISTORICAL_INDEXER_ENABLED?.toLowerCase() !== 'true') {
-      console.log('[HistoricalIndexer] Disabled. Set HISTORICAL_INDEXER_ENABLED=true after configuring the Pyrogram session.');
+      console.log('[HistoricalIndexer] Disabled. Set HISTORICAL_INDEXER_ENABLED=true after configuring API_ID, API_HASH and SESSION_ENCRYPTION_KEY; connect the Telegram account from the admin bot.');
       return;
     }
 
-    const hasEnvironmentSession = Boolean(process.env.PYROGRAM_SESSION_STRING?.trim());
     const missing: string[] = REQUIRED_ENV.filter((key) => !process.env[key]?.trim());
-    if (!hasEnvironmentSession && !process.env.SESSION_ENCRYPTION_KEY?.trim()) {
-      missing.push('PYROGRAM_SESSION_STRING (or SESSION_ENCRYPTION_KEY with an encrypted Supabase session)');
+    if (!process.env.SESSION_ENCRYPTION_KEY?.trim()) {
+      missing.push('SESSION_ENCRYPTION_KEY (required for encrypted Telegram login and session storage)');
     }
     if (missing.length) {
       console.log(
