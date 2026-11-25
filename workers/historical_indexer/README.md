@@ -8,7 +8,7 @@ This worker scans historical Telegram channel messages using a dedicated Pyrogra
 - `API_ID` and `API_HASH`: Telegram application credentials from my.telegram.org.
 - `SESSION_ENCRYPTION_KEY` (required): Fernet URL-safe base64 key used to encrypt the Pyrogram session at rest. It also derives the AES-GCM key used for short-lived login requests.
 - `PYROGRAM_SESSION_STRING` (optional fallback): existing Pyrogram session string. A session saved in Supabase takes priority so an admin can rotate accounts.
-- The controller bot's account-connection flow uses phone number → Telegram login code → 2FA password when requested. OTP/password payloads are encrypted before database storage and the incoming Telegram messages are deleted after receipt.
+- The encrypted login-request processor and session persistence are implemented. The controller-bot phone/code/2FA prompt wiring is still pending, so do not expect the interactive login button to be available yet.
 - `INDEXER_WORKER_ID` (optional): stable worker label for lease ownership.
 - `POLL_INTERVAL_SECONDS` (optional, default 5).
 - `BATCH_SIZE` (optional, default 50).
@@ -19,7 +19,7 @@ The worker never accepts a plaintext session string from command-line arguments 
 
 ## Enable in the single Render service
 
-Set `HISTORICAL_INDEXER_ENABLED=true` after `DATABASE_URL`, `API_ID`, `API_HASH`, and `SESSION_ENCRYPTION_KEY` are configured. The worker can start before a user session exists and wait for the admin account login flow. The Docker image installs these Python dependencies; the Node.js server supervises the worker and restarts it with backoff.
+Set `HISTORICAL_INDEXER_ENABLED=true` after `DATABASE_URL`, `API_ID`, `API_HASH`, and `SESSION_ENCRYPTION_KEY` are configured. The worker can start before a user session exists and wait for encrypted login requests; scanning itself remains controlled by the `historical_indexer_enabled` database setting. The Docker image installs these Python dependencies; the Node.js server supervises the worker and restarts it with backoff.
 
 ## Run locally
 
