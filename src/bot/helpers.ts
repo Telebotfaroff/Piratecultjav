@@ -592,6 +592,25 @@ async function handleSearchQuery(ctx: any, rawQuery: string, page = 0) {
   }
 }
 
+const activeBulkDeliveryChats = new Set<string>();
+
+/** Starts bulk delivery outside the Telegram update handler and prevents duplicate runs per user/chat. */
+function launchDownloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: string): void {
+  const key = String(ctx.chat?.id ?? 'no-chat') + ':' + String(ctx.from?.id ?? 'no-user');
+  if (activeBulkDeliveryChats.has(key)) {
+    void ctx.reply('⏳ A Download All job is already running in this chat. Please wait for its summary.');
+    return;
+  }
+  activeBulkDeliveryChats.add(key);
+  void Promise.resolve()
+    .then(() => downloadAllSearchResults(bot, ctx, rawQuery))
+    .catch((err) => {
+      console.error('[BulkDownload] Background job crashed:', err);
+      return ctx.reply('⚠️ Bulk delivery stopped unexpectedly. Please try again.');
+    })
+    .finally(() => activeBulkDeliveryChats.delete(key));
+}
+
 async function downloadAllSearchResults(bot: Telegraf, ctx: any, rawQuery: string) {
   const query = String(rawQuery || '').trim();
   if (!ctx.from || !query) return ctx.reply('⚠️ I could not identify the search query. Please search again.');
@@ -782,4 +801,4 @@ function formatTimer(seconds: number): string {
   return seconds + ' second(s)';
 }
 
-export { deliverVideoToUser, deliverMediaPartGroup, downloadAllSearchResults, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer };
+export { deliverVideoToUser, deliverMediaPartGroup, downloadAllSearchResults, launchDownloadAllSearchResults, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer };

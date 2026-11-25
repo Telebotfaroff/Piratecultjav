@@ -3,6 +3,21 @@ import { trackTelegramUser } from '../../services/users.ts';
 import { getSetting } from '../../services/settings.ts';
 import { isAdmin } from '../../config.ts';
 
+/** Bound slow database calls so one update cannot hold Telegram polling indefinitely. */
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label + ' timed out after ' + timeoutMs + 'ms')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Saves user identity updates and filters blocked users before command handlers run. */
 export function registerUserTrackingMiddleware(bot: Telegraf): void {
   bot.use(async (ctx, next) => {
@@ -10,7 +25,7 @@ export function registerUserTrackingMiddleware(bot: Telegraf): void {
       // One atomic RPC replaces the previous SELECT + UPSERT + blocked-status SELECT.
       let trackedUser: { is_new: boolean; is_blocked: boolean };
       try {
-        trackedUser = await trackTelegramUser({
+        trackedUser = await withTimeout(trackTelegramUser({
           id: ctx.from.id,
           username: ctx.from.username,
           first_name: ctx.from.first_name,
@@ -51,7 +66,7 @@ export function registerUserTrackingMiddleware(bot: Telegraf): void {
     }
 
     if (ctx.from && !isAdmin(ctx.from.id)) {
-      const maintenance = await getSetting<boolean>('maintenance_mode', false);
+      const maintenance = await withTimeout(getSetting<boolean>('maintenance_mode', false), 5_000, 'Maintenance setting');
       if (maintenance) {
         try {
           await ctx.reply('⚠️ The bot is currently under maintenance. Please check back later.');

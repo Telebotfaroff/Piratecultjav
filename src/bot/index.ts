@@ -16,7 +16,7 @@ import { getSetting, setSetting } from '../services/settings.ts';
 import { addDeliveryBot, getDeliveryBots, getActiveDeliveryBotId, selectDeliveryBot, replaceActiveDeliveryBot, removeDeliveryBot } from '../services/deliveryBots.ts';
 import { classifyTelegramError, isRetryableTelegramError, withTelegramRetry } from '../services/telegramErrors.ts';
 import { recordVideoDeliveryEvent, getVideoDeliveryAnalytics } from '../services/videoAnalytics.ts';
-import { deliverVideoToUser, downloadAllSearchResults, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer } from './helpers.ts';
+import { deliverVideoToUser, downloadAllSearchResults, launchDownloadAllSearchResults, showAdminVideoEditMenu, sendReferralLeaderboard, sendUserPlan, sendReferralInfo, escapeHtml, handleSearchQuery, showForceSubAdminMenu, showAdminSettings, formatTimer } from './helpers.ts';
 import { registerPaymentEvents } from './events/payments.ts';
 import { getActiveBotRole as getStoredActiveBotRole, setActiveBotRole } from './state.ts';
 import { getPremiumPackages, savePremiumPackage, removePremiumPackage, togglePremiumPackage, sendPremiumStore, sendPremiumInvoice } from './premium.ts';
@@ -1721,7 +1721,6 @@ deliveryBot?.command('start', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Unauthorized.', { show_alert: true });
     try {
       const result = await enqueueExistingHistoricalSource(ctx.match[1], ctx.from!.id);
-      await startHistoricalIndexer();
       const label = escapeHtml(result.source.title || result.source.source_username || result.source.source_chat_id);
       await ctx.answerCbQuery(result.alreadyQueued ? 'Already queued or running.' : 'Channel queued.');
       await ctx.reply(
@@ -2955,7 +2954,8 @@ deliveryBot?.command('start', async (ctx) => {
       '⏳ <b>Download All started</b>\n\n🔎 Search: <code>' + escapeHtml(query) + '</code>\nYour matching videos will be sent one by one. Keep this chat open.',
       { parse_mode: 'HTML' },
     );
-    return downloadAllSearchResults(deliveryBot!, ctx, query);
+    launchDownloadAllSearchResults(deliveryBot!, ctx, query);
+    return;
   });
 
   deliveryBot?.action('downloadall:cancel', async (ctx) => {
@@ -3545,7 +3545,6 @@ deliveryBot?.command('start', async (ctx) => {
       try {
         const result = await enqueueHistoricalSource(input, ctx.from.id);
         await clearAdminSession(ctx.from.id);
-        await startHistoricalIndexer();
         const label = escapeHtml(result.source.title || result.source.source_username || result.source.source_chat_id);
         await ctx.reply(
           (result.alreadyQueued ? 'ℹ️ This source already has an active job.' : '✅ Historical indexing job queued.') +
