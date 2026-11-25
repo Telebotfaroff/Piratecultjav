@@ -1003,7 +1003,7 @@ deliveryBot?.command('start', async (ctx) => {
 
   deliveryBot?.command('referral', async (ctx) => {
     if (!ctx.from) return;
-    return sendReferralInfo(controllerBot, ctx);
+    return sendReferralInfo(deliveryBot!, ctx);
   });
 
   // 6. Admin user blocking commands
@@ -2372,7 +2372,7 @@ deliveryBot?.command('start', async (ctx) => {
   deliveryBot?.action('user:referral', async (ctx) => {
     if (!ctx.from) return ctx.answerCbQuery();
     await ctx.answerCbQuery();
-    return sendReferralInfo(controllerBot, ctx);
+    return sendReferralInfo(deliveryBot!, ctx);
   });
 
   // Admin video management callbacks
