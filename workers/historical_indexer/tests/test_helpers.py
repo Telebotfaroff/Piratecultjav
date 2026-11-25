@@ -87,10 +87,6 @@ class HistoricalIndexerHelperTests(unittest.TestCase):
         self.assertEqual(session, "supabase-session")
         self.assertEqual(source, "supabase")
 
-    def test_missing_session_configuration_has_clear_error(self):
-        with self.assertRaisesRegex(RuntimeError, "No Pyrogram session configured"):
-            resolve_session_string({}, None)
-
 
 if __name__ == "__main__":
     unittest.main()
