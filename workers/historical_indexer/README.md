@@ -6,8 +6,9 @@ This worker scans historical Telegram channel messages using a dedicated Pyrogra
 
 - `DATABASE_URL`: PostgreSQL connection string for the existing Supabase database.
 - `API_ID` and `API_HASH`: Telegram application credentials from my.telegram.org.
-- `PYROGRAM_SESSION_STRING` (recommended): Pyrogram user session string supplied directly through Render Environment settings. When set, it takes priority and the worker does not query the encrypted session secret.
-- `SESSION_ENCRYPTION_KEY` (fallback only): Fernet URL-safe base64 key used to decrypt the session stored in `private_runtime_secrets` under `pyrogram_session_string`, used only when `PYROGRAM_SESSION_STRING` is empty.
+- `SESSION_ENCRYPTION_KEY` (required): Fernet URL-safe base64 key used to encrypt the Pyrogram session at rest. It also derives the AES-GCM key used for short-lived login requests.
+- `PYROGRAM_SESSION_STRING` (optional fallback): existing Pyrogram session string. A session saved in Supabase takes priority so an admin can rotate accounts.
+- The controller bot's account-connection flow uses phone number → Telegram login code → 2FA password when requested. OTP/password payloads are encrypted before database storage and the incoming Telegram messages are deleted after receipt.
 - `INDEXER_WORKER_ID` (optional): stable worker label for lease ownership.
 - `POLL_INTERVAL_SECONDS` (optional, default 5).
 - `BATCH_SIZE` (optional, default 50).
@@ -18,7 +19,7 @@ The worker never accepts a plaintext session string from command-line arguments 
 
 ## Enable in the single Render service
 
-Set `HISTORICAL_INDEXER_ENABLED=true` after `DATABASE_URL`, `API_ID`, `API_HASH`, and either `PYROGRAM_SESSION_STRING` or the encrypted Supabase session plus `SESSION_ENCRYPTION_KEY` are configured. The Render environment session takes priority. The Docker image installs these Python dependencies; the Node.js server supervises the worker and restarts it with backoff. Leave it disabled during initial deployment if no Pyrogram session has been configured yet.
+Set `HISTORICAL_INDEXER_ENABLED=true` after `DATABASE_URL`, `API_ID`, `API_HASH`, and `SESSION_ENCRYPTION_KEY` are configured. The worker can start before a user session exists and wait for the admin account login flow. The Docker image installs these Python dependencies; the Node.js server supervises the worker and restarts it with backoff.
 
 ## Run locally
 
@@ -34,7 +35,10 @@ python -m workers.historical_indexer.main
 - Default mode is `all`; supported media includes photo, video, document, animation, audio, voice, video note, and sticker.
 - Messages are scanned newest-to-oldest. The job checkpoint stores the last committed message ID; resuming uses that ID as an exclusive cursor.
 - Message identity is `(source_chat_id, source_message_id)`, so retries do not create duplicate source records.
-- Progress and checkpoints are committed in batches. A worker crash can repeat at most the uncommitted batch, which is safe due to the unique key.
+- Progress and checkpoints are committed in batches. Batch size and queue polling interval can be adjusted at runtime from indexer settings.
+- Failed jobs retry automatically with capped exponential backoff and stop after the configured attempt limit.
+- Active sources are automatically rescanned at the configured interval (daily by default); successful scans update the last-scan timestamp.
+- Captions with `Part 1/2`, `CD1/CD2`, `Disc 1/2`, and similar markers are assigned a shared multipart group key and recorded in `media_part_groups`.
 - Pause/cancel requests are checked between batches.
 - Fatal job errors are saved in `historical_index_jobs.error`, mark the job as `failed`, and trigger a best-effort Telegram notification when `HISTORICAL_INDEXER_NOTIFY_CHAT_IDS` is configured.
 
