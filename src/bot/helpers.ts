@@ -709,31 +709,27 @@ async function showAdminSettings(ctx: any) {
     getSetting<boolean>('force_sub_enabled', false),
     getSetting<boolean>('maintenance_mode', false),
   ]);
-
   const text = [
-    '🛡️ <b>PIRATECULTJAV · ADMIN</b>',
-    '👥 <b>' + users + '</b> users  ·  🎬 <b>' + videos + '</b> videos',
-    '⚙️ <b>' + jobs.queued + '</b> queued  ·  <b>' + jobs.processing + '</b> running',
+    '🛡️ <b>PIRATECULTJAV · CONTROL CENTER</b>',
+    '👥 <b>' + users + '</b> users  ·  🎬 <b>' + videos + '</b> catalog entries',
+    '⚙️ <b>' + jobs.queued + '</b> queued  ·  <b>' + jobs.processing + '</b> processing',
     '🤖 ' + getActiveBotRole().toUpperCase() + '  ·  🔒 Force-sub ' + (forceSub ? 'ON' : 'OFF') +
       '  ·  🛠️ Maintenance ' + (maintenance ? 'ON' : 'OFF'),
     '🗑️ Auto-delete: <b>' + formatTimer(deleteTimer) + '</b>',
     '',
-    '<i>Choose a section</i>',
-  ].join('\n');
-
+    '<i>Select a settings category</i>',
+  ].join('\\n');
   const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('📊 Stats', 'admin:overview'), Markup.button.callback('👥 Users', 'admin:users')],
-    [Markup.button.callback('🎬 Content', 'admin:content'), Markup.button.callback('⚙️ Jobs', 'admin:jobs')],
-    [Markup.button.callback('🕘 History', 'admin:history'), Markup.button.callback('💰 Monetization', 'admin:monetization')],
-    [Markup.button.callback('📥 Quotas', 'admin:quota'), Markup.button.callback('📣 Broadcast', 'settings:broadcast')],
-    [Markup.button.callback('🔒 Force-sub', 'settings:forcesub'), Markup.button.callback('🧾 Missing', 'admin:missedcodes')],
-    [Markup.button.callback('🖼️ No Screenshot', 'admin:missingthumbnails')],
-    [Markup.button.callback('🖼️ Missing Thumbnail Channel', 'missingchannel:manage')],
-    [Markup.button.callback('🔔 Alerts', 'settings:notifications'), Markup.button.callback('🚚 Delivery', 'settings:deliverybot')],
-    [Markup.button.callback('🛠️ System', 'admin:system'), Markup.button.callback('🔄 Recovery', 'settings:recovery')],
+    [Markup.button.callback('📊 Overview & Analytics', 'admin:overview')],
+    [Markup.button.callback('🎬 Content & Indexing', 'admin:content'), Markup.button.callback('🕘 History Scanner', 'admin:history')],
+    [Markup.button.callback('👥 Users & Access', 'admin:users'), Markup.button.callback('🔒 Force Subscribe', 'settings:forcesub')],
+    [Markup.button.callback('💰 Monetization', 'admin:monetization'), Markup.button.callback('📥 Quotas', 'admin:quota')],
+    [Markup.button.callback('🤖 Bots & Delivery', 'settings:deliverybot')],
+    [Markup.button.callback('📣 Broadcast & Alerts', 'settings:notifications')],
+    [Markup.button.callback('🧾 Catalog Maintenance', 'admin:missedcodes'), Markup.button.callback('🖼️ Thumbnail Tools', 'missingchannel:manage')],
+    [Markup.button.callback('🛠️ System & Recovery', 'admin:system')],
     [Markup.button.callback('✖ Close', 'settings:close')],
   ]);
-
   if (ctx.callbackQuery) return ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
   return ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
 }
