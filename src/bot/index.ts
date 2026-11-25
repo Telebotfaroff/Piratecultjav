@@ -1734,18 +1734,45 @@ deliveryBot?.command('start', async (ctx) => {
     return showAdminSettings(ctx);
   });
 
+  async function getDeliveryBotDisplayStatus(): Promise<{ label: string; detail: string }> {
+    if (!isDeliveryBotConfigured || !configuredDeliveryToken) {
+      return { label: '⚪ Not configured', detail: 'Add a delivery bot to enable user-facing delivery.' };
+    }
+    if (deliveryStartInProgress) return { label: '🟡 Starting', detail: 'Telegram connection is being initialized.' };
+    if (deliveryRecoveryTimer) return { label: '🟠 Offline · retry scheduled', detail: 'Automatic recovery is waiting before the next attempt.' };
+    if (!deliveryBotInstance || !isDeliveryBotActive) {
+      return { label: '🔴 Offline', detail: 'The delivery bot is not currently receiving updates.' };
+    }
+    try {
+      const me = await deliveryBotInstance.telegram.getMe();
+      if (isWebhookActive) {
+        const webhook = await deliveryBotInstance.telegram.getWebhookInfo();
+        if (!webhook.url) return { label: '🔴 Offline', detail: 'Webhook is not registered with Telegram.' };
+        return { label: '🟢 Running · Webhook', detail: '@' + (me.username || 'unknown') + ' · pending updates: ' + webhook.pending_update_count };
+      }
+      return { label: '🟢 Running · Long polling', detail: '@' + (me.username || 'unknown') + ' · Telegram API reachable.' };
+    } catch (error) {
+      isDeliveryBotActive = false;
+      if (!isWebhookActive) scheduleDeliveryBotRecovery();
+      return { label: '🔴 Offline', detail: 'Telegram health check failed: ' + (error instanceof Error ? error.message : String(error)).slice(0, 180) };
+    }
+  }
+
   async function showDeliveryBotSettings(ctx: any, edit = true) {
     const bots = await getDeliveryBots();
     const activeId = await getActiveDeliveryBotId();
     const runtime = getBotRuntimeStatus();
     const active = bots.find((bot) => bot.id === activeId) || null;
+    const deliveryStatus = await getDeliveryBotDisplayStatus();
     const lines = [
       '🚚 <b>DELIVERY BOT MANAGER</b>',
       '━━━━━━━━━━━━━━━━━━━━',
       '',
       '🤖 <b>Configured:</b> ' + bots.length,
       '🟢 <b>Selected:</b> ' + (active ? escapeHtml(active.name) : 'None'),
-      '⚙️ <b>Runtime:</b> ' + (runtime.deliveryActive ? '🟢 Running' : active ? '🟠 Offline / retrying' : '⚪ Not configured'),
+      '⚙️ <b>Status:</b> ' + deliveryStatus.label,
+      '<i>' + escapeHtml(deliveryStatus.detail) + '</i>',
+      '🧩 <b>Controller:</b> ' + (runtime.controllerActive ? '🟢 Online' : '🔴 Offline'),
       '',
       '<i>Only the selected bot handles user-facing commands and video delivery. Switching is manual.</i>',
       '',
@@ -1842,15 +1869,26 @@ deliveryBot?.command('start', async (ctx) => {
 
   controllerBot.action('deliverybot:restart', async (ctx) => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCbQuery('Admin access required.', { show_alert: true });
-    await ctx.answerCbQuery('Restarting delivery bot…');
-    const token = await getSetting<string>('delivery_bot_token', '');
-    if (!token) return showDeliveryBotSettings(ctx, false);
-    await ctx.reply('🔄 Restarting the bot runtime with the saved delivery bot configuration.');
-    setTimeout(() => {
-      const mode = getBotRuntimeStatus().mode;
-      if (mode === 'webhook' && webhookApp) void startBotWebhook(webhookApp);
-      else void startBotPolling();
-    }, 500);
+    try {
+      const token = await getSetting<string>('delivery_bot_token', '');
+      if (!token) {
+        await ctx.answerCbQuery('No delivery bot token configured.', { show_alert: true });
+        return showDeliveryBotSettings(ctx, true);
+      }
+      await ctx.answerCbQuery('Restarting delivery runtime…');
+      const started = await restartDeliveryRuntime();
+      const status = await getDeliveryBotDisplayStatus();
+      if (!started || !status.label.startsWith('🟢')) {
+        await ctx.reply('⚠️ Restart attempted, but the delivery bot is not confirmed online. ' + status.label + '\\n' + status.detail);
+      } else {
+        await ctx.reply('✅ Delivery bot restarted and health-checked successfully.');
+      }
+      return showDeliveryBotSettings(ctx, true);
+    } catch (error) {
+      console.error('[DeliveryBot] Manual restart failed:', error);
+      await ctx.answerCbQuery('Restart failed.', { show_alert: true }).catch(() => undefined);
+      return showDeliveryBotSettings(ctx, true);
+    }
   });
 
   controllerBot.action('admin:overview', async (ctx) => {
